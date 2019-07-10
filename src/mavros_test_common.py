@@ -1,7 +1,5 @@
-#!/usr/bin/env python2
-from __future__ import division
+#!/usr/bin/env python3
 
-import unittest
 import rospy
 import math
 from geometry_msgs.msg import PoseStamped
@@ -13,9 +11,9 @@ from pymavlink import mavutil
 from sensor_msgs.msg import NavSatFix
 
 
-class MavrosTestCommon(unittest.TestCase):
+class MavrosQuad():
     def __init__(self, *args):
-        super(MavrosTestCommon, self).__init__(*args)
+        super(MavrosQuad, self).__init__(*args)
 
     def setUp(self):
         self.altitude = Altitude()
@@ -46,7 +44,7 @@ class MavrosTestCommon(unittest.TestCase):
             rospy.wait_for_service('mavros/set_mode', service_timeout)
             rospy.loginfo("ROS services are up")
         except rospy.ROSException:
-            self.fail("failed to connect to services")
+            rospy.logerr("failed to connect to services")
         self.get_param_srv = rospy.ServiceProxy('mavros/param/get', ParamGet)
         self.set_arming_srv = rospy.ServiceProxy('mavros/cmd/arming',
                                                  CommandBool)
@@ -170,7 +168,7 @@ class MavrosTestCommon(unittest.TestCase):
         loop_freq = 1  # Hz
         rate = rospy.Rate(loop_freq)
         arm_set = False
-        for i in xrange(timeout * loop_freq):
+        for i in range(timeout * loop_freq):
             if self.state.armed == arm:
                 arm_set = True
                 rospy.loginfo("set arm success | seconds: {0} of {1}".format(
@@ -187,7 +185,7 @@ class MavrosTestCommon(unittest.TestCase):
             try:
                 rate.sleep()
             except rospy.ROSException as e:
-                self.fail(e)
+                rospy.logerr(e)
 
         self.assertTrue(arm_set, (
             "failed to set arm | new arm: {0}, old arm: {1} | timeout(seconds): {2}".
@@ -200,7 +198,7 @@ class MavrosTestCommon(unittest.TestCase):
         loop_freq = 1  # Hz
         rate = rospy.Rate(loop_freq)
         mode_set = False
-        for i in xrange(timeout * loop_freq):
+        for i in range(timeout * loop_freq):
             if self.state.mode == mode:
                 mode_set = True
                 rospy.loginfo("set mode success | seconds: {0} of {1}".format(
@@ -217,7 +215,7 @@ class MavrosTestCommon(unittest.TestCase):
             try:
                 rate.sleep()
             except rospy.ROSException as e:
-                self.fail(e)
+                rospy.logerr(e)
 
         self.assertTrue(mode_set, (
             "failed to set mode | new mode: {0}, old mode: {1} | timeout(seconds): {2}".
@@ -231,7 +229,7 @@ class MavrosTestCommon(unittest.TestCase):
         loop_freq = 1  # Hz
         rate = rospy.Rate(loop_freq)
         simulation_ready = False
-        for i in xrange(timeout * loop_freq):
+        for i in range(timeout * loop_freq):
             if all(value for value in self.sub_topics_ready.values()):
                 simulation_ready = True
                 rospy.loginfo("simulation topics ready | seconds: {0} of {1}".
@@ -241,7 +239,7 @@ class MavrosTestCommon(unittest.TestCase):
             try:
                 rate.sleep()
             except rospy.ROSException as e:
-                self.fail(e)
+                rospy.logerr(e)
 
         self.assertTrue(simulation_ready, (
             "failed to hear from all subscribed simulation topics | topic ready flags: {0} | timeout(seconds): {1}".
@@ -254,7 +252,7 @@ class MavrosTestCommon(unittest.TestCase):
         loop_freq = 10  # Hz
         rate = rospy.Rate(loop_freq)
         landed_state_confirmed = False
-        for i in xrange(timeout * loop_freq):
+        for i in range(timeout * loop_freq):
             if self.extended_state.landed_state == desired_landed_state:
                 landed_state_confirmed = True
                 rospy.loginfo("landed state confirmed | seconds: {0} of {1}".
@@ -264,7 +262,7 @@ class MavrosTestCommon(unittest.TestCase):
             try:
                 rate.sleep()
             except rospy.ROSException as e:
-                self.fail(e)
+                rospy.logerr(e)
 
         self.assertTrue(landed_state_confirmed, (
             "landed state not detected | desired: {0}, current: {1} | index: {2}, timeout(seconds): {3}".
@@ -282,7 +280,7 @@ class MavrosTestCommon(unittest.TestCase):
         loop_freq = 10  # Hz
         rate = rospy.Rate(loop_freq)
         transitioned = False
-        for i in xrange(timeout * loop_freq):
+        for i in range(timeout * loop_freq):
             if transition == self.extended_state.vtol_state:
                 rospy.loginfo("transitioned | seconds: {0} of {1}".format(
                     i / loop_freq, timeout))
@@ -292,7 +290,7 @@ class MavrosTestCommon(unittest.TestCase):
             try:
                 rate.sleep()
             except rospy.ROSException as e:
-                self.fail(e)
+                rospy.logerr(e)
 
         self.assertTrue(transitioned, (
             "transition not detected | desired: {0}, current: {1} | index: {2} timeout(seconds): {3}".
@@ -305,7 +303,7 @@ class MavrosTestCommon(unittest.TestCase):
         loop_freq = 1  # Hz
         rate = rospy.Rate(loop_freq)
         wps_cleared = False
-        for i in xrange(timeout * loop_freq):
+        for i in range(timeout * loop_freq):
             if not self.mission_wp.waypoints:
                 wps_cleared = True
                 rospy.loginfo("clear waypoints success | seconds: {0} of {1}".
@@ -322,7 +320,7 @@ class MavrosTestCommon(unittest.TestCase):
             try:
                 rate.sleep()
             except rospy.ROSException as e:
-                self.fail(e)
+                rospy.logerr(e)
 
         self.assertTrue(wps_cleared, (
             "failed to clear waypoints | timeout(seconds): {0}".format(timeout)
@@ -338,7 +336,7 @@ class MavrosTestCommon(unittest.TestCase):
         rate = rospy.Rate(loop_freq)
         wps_sent = False
         wps_verified = False
-        for i in xrange(timeout * loop_freq):
+        for i in range(timeout * loop_freq):
             if not wps_sent:
                 try:
                     res = self.wp_push_srv(start_index=0, waypoints=waypoints)
@@ -361,7 +359,7 @@ class MavrosTestCommon(unittest.TestCase):
             try:
                 rate.sleep()
             except rospy.ROSException as e:
-                self.fail(e)
+                rospy.logerr(e)
 
         self.assertTrue((
             wps_sent and wps_verified
@@ -374,7 +372,7 @@ class MavrosTestCommon(unittest.TestCase):
         loop_freq = 1  # Hz
         rate = rospy.Rate(loop_freq)
         res = False
-        for i in xrange(timeout * loop_freq):
+        for i in range(timeout * loop_freq):
             try:
                 res = self.get_param_srv('MAV_TYPE')
                 if res.success:
@@ -390,7 +388,7 @@ class MavrosTestCommon(unittest.TestCase):
             try:
                 rate.sleep()
             except rospy.ROSException as e:
-                self.fail(e)
+                rospy.logerr(e)
 
         self.assertTrue(res.success, (
             "MAV_TYPE param get failed | timeout(seconds): {0}".format(timeout)
@@ -398,6 +396,8 @@ class MavrosTestCommon(unittest.TestCase):
 
     def log_topic_vars(self):
         """log the state of topic variables"""
+        print("log")
+        print("extended_state:\n{}".format(self.extended_state))
         rospy.loginfo("========================")
         rospy.loginfo("===== topic values =====")
         rospy.loginfo("========================")
@@ -415,3 +415,16 @@ class MavrosTestCommon(unittest.TestCase):
         rospy.loginfo("========================")
         rospy.loginfo("state:\n{}".format(self.state))
         rospy.loginfo("========================")
+
+
+    def assertTrue(self, result, text):
+        if(not result):
+            print(text)
+
+
+if __name__ == '__main__':
+    rospy.init_node('pyquad', anonymous=True)
+    quad = MavrosQuad()
+    quad.setUp()
+    quad.wait_for_topics(10)
+    quad.log_topic_vars()
