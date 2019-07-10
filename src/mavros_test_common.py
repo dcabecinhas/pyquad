@@ -2,20 +2,27 @@
 
 import rospy
 import math
-from geometry_msgs.msg import PoseStamped
-from mavros_msgs.msg import Altitude, ExtendedState, HomePosition, State, \
+
+from gazebo_msgs.msg import LinkStates
+from geometry_msgs.msg import PoseStamped, TwistStamped, Pose, Twist, Quaternion, Vector3
+from sensor_msgs.msg import BatteryState, Imu, NavSatFix
+from mavros_msgs.msg import ActuatorControl, AttitudeTarget, Altitude, \
+                            ExtendedState, HomePosition, ManualControl, \
+                            PositionTarget, State, StatusText, Thrust, \
                             WaypointList
 from mavros_msgs.srv import CommandBool, ParamGet, SetMode, WaypointClear, \
                             WaypointPush
-from pymavlink import mavutil
-from sensor_msgs.msg import NavSatFix
 
+from mavros.utils import *
+from mavros_msgs.msg import ActuatorControl, AttitudeTarget, ManualControl, PositionTarget, State, StatusText, Thrust
+
+from pymavlink import mavutil
 
 class MavrosQuad():
+
     def __init__(self, *args):
         super(MavrosQuad, self).__init__(*args)
 
-    def setUp(self):
         self.altitude = Altitude()
         self.extended_state = ExtendedState()
         self.global_position = NavSatFix()
@@ -25,11 +32,17 @@ class MavrosQuad():
         self.state = State()
         self.mav_type = None
 
+        self.local_velocity = TwistStamped()
+
+        self.load_name = 'iris_tether::/load_link'
+        self.load_position = Pose()
+        self.load_velocity = Twist()
+
         self.sub_topics_ready = {
             key: False
             for key in [
-                'alt', 'ext_state', 'global_pos', 'home_pos', 'local_pos',
-                'mission_wp', 'state'
+                'alt', 'ext_state', 'global_pos', 'home_pos', 'load',
+                'local_pos', 'local_vel', 'mission_wp', 'state'
             ]
         }
 
@@ -69,13 +82,20 @@ class MavrosQuad():
         self.local_pos_sub = rospy.Subscriber('mavros/local_position/pose',
                                               PoseStamped,
                                               self.local_position_callback)
-        self.mission_wp_sub = rospy.Subscriber(
-            'mavros/mission/waypoints', WaypointList, self.mission_wp_callback)
-        self.state_sub = rospy.Subscriber('mavros/state', State,
-                                          self.state_callback)
+        self.mission_wp_sub = rospy.Subscriber('mavros/mission/waypoints', 
+                                            WaypointList, 
+                                            self.mission_wp_callback)
+        self.state_sub = rospy.Subscriber('mavros/state', 
+                                            State,
+                                            self.state_callback)
+        
+        self.local_vel_sub = rospy.Subscriber('mavros/local_position/velocity_local',
+                                            TwistStamped,
+                                            self.local_velocity_callback)
 
-    def tearDown(self):
-        self.log_topic_vars()
+        self.load_sub = rospy.Subscriber('/gazebo/link_states',
+                                            LinkStates,
+                                            self.load_callback)
 
     #
     # Callback functions
@@ -157,6 +177,20 @@ class MavrosQuad():
         # mavros publishes a disconnected state message on init
         if not self.sub_topics_ready['state'] and data.connected:
             self.sub_topics_ready['state'] = True
+
+    def local_velocity_callback(self, data):
+        self.local_velocity = data
+
+        if not self.sub_topics_ready['local_vel']:
+            self.sub_topics_ready['local_vel'] = True
+
+    def load_callback(self, data):
+        ind = data.name.index(self.load_name)
+        self.load_position = data.pose[ind]
+        self.load_velocity = data.twist[ind]
+        
+        if not self.sub_topics_ready['load']:
+                self.sub_topics_ready['load'] = True
 
     #
     # Helper methods
@@ -415,6 +449,12 @@ class MavrosQuad():
         rospy.loginfo("========================")
         rospy.loginfo("state:\n{}".format(self.state))
         rospy.loginfo("========================")
+        rospy.loginfo("local_velocity:\n{}".format(self.local_velocity))
+        rospy.loginfo("========================")
+        rospy.loginfo("load position:\n{}".format(self.load_position))
+        rospy.loginfo("========================")
+        rospy.loginfo("load velocity:\n{}".format(self.load_velocity))
+        rospy.loginfo("========================")
 
 
     def assertTrue(self, result, text):
@@ -425,6 +465,5 @@ class MavrosQuad():
 if __name__ == '__main__':
     rospy.init_node('pyquad', anonymous=True)
     quad = MavrosQuad()
-    quad.setUp()
-    quad.wait_for_topics(10)
+    quad.wait_for_topics(20)
     quad.log_topic_vars()
