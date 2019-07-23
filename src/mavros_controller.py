@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
 
-# Based on https://github.com/PX4/Firmware/blob/master/integrationtests/python_src/px4_it/mavros/mavros_test_common.py
-
 import rospy
 import math
 
@@ -694,15 +692,16 @@ class MavrosQuad():
         rospy.loginfo(f'oL: {(self.oL - self.gazebo_oL).T}')
         return
 
+    def controller(self):
+        return
+
 
 if __name__ == '__main__':
     rospy.init_node('pyquad', anonymous=True)
     quad = MavrosQuad()
     quad.wait_for_topics(10)
-    # quad.computeSystemStates()
-    # quad.log_topic_vars()
-    # quad.log_states()
-    for i in range(5):
+    for i in range(10):
         quad.computeSystemStates()
+        # quad.log_topic_vars()
         quad.log_states()
-        quad.compare_gazebo_px4()
+        quad.controller()
