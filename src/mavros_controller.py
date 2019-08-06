@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+from single_quadrotor import *
+
 import rospy
 import math
 
@@ -22,6 +24,21 @@ from mavros.utils import *
 from pymavlink import mavutil
 
 from frame_conversions import *
+
+from std_msgs.msg import Header
+from threading import Thread
+
+def F_vector_to_Rotation(F):
+    F = F.ravel()
+    e3 = np.array([0,0,1])
+
+    # Angle of 
+    angle = (arccos((-e3) @ F / norm(F)))
+    vector = cross(-e3,F)
+    vector = vector / norm(vector)
+
+    return Rotation.from_rotvec(angle * vector)
+    
 
 class MavrosQuad():
 
@@ -50,6 +67,9 @@ class MavrosQuad():
         self.gazebo_imu_name = 'iris_tether::/imu_link'
         self.gazebo_imu_pose = Pose()
         self.gazebo_imu_twist = Twist()
+
+        self.q_input = np.array([0,0,0,1])
+        self.T_input = 0
 
         self.sub_topics_ready = {
             key: False
@@ -113,6 +133,19 @@ class MavrosQuad():
         self.gazebo_sub = rospy.Subscriber('/gazebo/link_states',
                                             LinkStates,
                                             self.gazebo_callback)
+
+        # ROS Publishers
+
+        self.att = AttitudeTarget()
+
+        self.att_setpoint_pub = rospy.Publisher(
+            'mavros/setpoint_raw/attitude', AttitudeTarget, queue_size=1)
+
+        # send setpoints in seperate thread to better prevent failsafe
+        self.att_thread = Thread(target=self.send_att, args=())
+        self.att_thread.daemon = True
+        # self.att_thread.start()
+
     #
     # Callback functions
     #
@@ -295,7 +328,7 @@ class MavrosQuad():
         rate = rospy.Rate(loop_freq)
         simulation_ready = False
         for i in range(timeout * loop_freq):
-            if all(value for value in self.sub_topics_ready.values()):
+            if all([value for value in self.sub_topics_ready.values()]):
                 simulation_ready = True
                 rospy.loginfo("simulation topics ready | seconds: {0} of {1}".
                               format(i / loop_freq, timeout))
@@ -459,6 +492,38 @@ class MavrosQuad():
             "MAV_TYPE param get failed | timeout(seconds): {0}".format(timeout)
         ))
 
+    def send_att(self):
+        try:
+            rate = rospy.Rate(10)  # Hz
+            self.att.body_rate = Vector3()
+            self.att.header = Header()
+            self.att.header.frame_id = "base_footprint"
+            
+            self.att.orientation = Quaternion(*self.q_input)
+            self.att.thrust = self.T_input
+            
+            self.att.type_mask = 7  # ignore body rate
+        except Exception as e: 
+            print(e)
+            pass
+
+        while not rospy.is_shutdown():
+            self.att.header.stamp = rospy.Time.now()
+
+            self.computeSystemStates()
+            self.controller()
+
+            q_ENU = transform_orientation_I(transform_orientation_B(Rotation.from_quat(self.q_input))).as_quat()
+
+            self.att.orientation = Quaternion(*q_ENU)
+            self.att.thrust = self.T_input
+            
+            self.att_setpoint_pub.publish(self.att)
+            try:  # prevent garbage in console output when thread is killed
+                rate.sleep()
+            except rospy.ROSInterruptException:
+                pass
+
     def log_topic_vars(self):
         """log the state of topic variables"""
         rospy.loginfo("log")
@@ -494,22 +559,21 @@ class MavrosQuad():
         
     def log_states(self):
         """log the states of quadrotor-load system"""
-        rospy.loginfo("========================")
-        rospy.loginfo(f"pL: {self.pL.T}")
-        rospy.loginfo(f"vL: {self.vL.T}")
-        rospy.loginfo(f"qL: {self.qL.T}")
-        rospy.loginfo(f"oL: {self.oL.T}")
-        # rospy.loginfo(f"R: {self.R}")
-        rospy.loginfo(f"R (in RPY): {(Rotation.from_dcm(self.RQ)).as_euler('xyz')}")
-        rospy.loginfo(f"R (in quat): {(Rotation.from_dcm(self.RQ)).as_quat()}")
-        rospy.loginfo(f"o: {self.oQ.T}")
-        rospy.loginfo(f"R_imu (in RPY): {(Rotation.from_dcm(self.R_imu)).as_euler('xyz')}")
-        rospy.loginfo(f"R_imu (in quat): {(Rotation.from_dcm(self.R_imu)).as_quat()}")
-        rospy.loginfo(f"o_imu: {self.o_imu.T}")
+        # rospy.loginfo("========================")
+        # rospy.loginfo(f"pL: {self.pL.T}")
+        # rospy.loginfo(f"vL: {self.vL.T}")
+        # rospy.loginfo(f"qL: {self.qL.T}")
+        # rospy.loginfo(f"oL: {self.oL.T}")
+        # # rospy.loginfo(f"R: {self.R}")
+        # rospy.loginfo(f"R (in RPY): {(Rotation.from_dcm(self.RQ)).as_euler('xyz')}")
+        # rospy.loginfo(f"R (in quat): {(Rotation.from_dcm(self.RQ)).as_quat()}")
+        # rospy.loginfo(f"o: {self.oQ.T}")
+        # rospy.loginfo(f"R_imu (in RPY): {(Rotation.from_dcm(self.R_imu)).as_euler('xyz')}")
+        # rospy.loginfo(f"R_imu (in quat): {(Rotation.from_dcm(self.R_imu)).as_quat()}")
+        # rospy.loginfo(f"o_imu: {self.o_imu.T}")
         rospy.loginfo(f"pQ: {self.pQ.T}")
-        rospy.loginfo(f"vQ: {self.vQ.T}")
-        
-        rospy.loginfo("========================")
+        rospy.loginfo(f"qQ: {self.qQ.T}")
+        # rospy.loginfo(f"vQ: {self.vQ.T}")
 
     def assertTrue(self, result, text):
         if(not result):
@@ -675,7 +739,7 @@ class MavrosQuad():
         return
 
     def compare_gazebo_px4(self):
-        rospy.loginfo("Compare gazebo states and MAVROS measurements")
+        # rospy.loginfo("Compare gazebo states and MAVROS measurements")
         rospy.loginfo(f'pQ: {(self.pQ - self.gazebo_pQ).T}')
         rospy.loginfo(f'vQ: {(self.vQ - self.gazebo_vQ).T}')
         rospy.loginfo(f'qQ: {(Rotation.from_quat(self.qQ).inv() * Rotation.from_quat(self.gazebo_qQ)).as_quat().T}')
@@ -693,15 +757,119 @@ class MavrosQuad():
         return
 
     def controller(self):
+
+        self.RL = np.eye(3)
+        self.oL = np.zeros([3,1])
+        self.delta_TLd = np.zeros(n_cables*n_dims)
+        self.V = np.zeros([1,1])
+
+        y = pack_state(self.pL,
+                    self.vL,
+                    self.RL,
+                    self.oL,
+                    self.delta_TLd,
+                    self.q,
+                    self.o,
+                    self.RQ,
+                    self.oQ,
+                    self.V)
+        
+        try:
+            dy, state = process_state(0,transpose(y))
+        except Exception as e:
+            print("Couldn't compute state")
+            print(e)
+            return
+
+        
+        # print(f"t = {self.local_position.header.stamp.secs}.{self.local_position.header.stamp.nsecs}")
+
+        # # All the same for single-quadrotor
+        # print(f"state.qFd = {state.qFd.ravel()}")
+        # print(f"state.Fd = {state.Fd.ravel()}")
+        # print(f"state.u = {state.u.ravel()}")
+        
+        e3 = np.array([0,0,1])
+        
+        R = F_vector_to_Rotation(state.Fd)
+        
+        # print(f"R * norm(Fd) * (-e3)  = {(R).as_dcm() @ (-e3) * norm(state.Fd)}")
+
+        kT = 2
+
+        q = R.as_quat()
+        T = kT*(norm(state.Fd)/(mass_quad*g) - 1.0) + 0.66
+
+        T = np.clip(T,0,1)
+
+        # print(f"q_input = {q}")
+        # print(f"T_input = {T}")
+
+        yaw = deg2rad(90)
+        R_yaw = Rotation.from_rotvec(yaw*np.array([0,0,1]))
+        
+        # YRP = Rotation.from_quat(self.qQ).as_euler('zyx')
+        # R_yaw = Rotation.from_rotvec(YRP[0]*np.array([0,0,1]))
+        
+        q = (R*R_yaw).as_quat()
+        # q_ENU = transform_orientation_I(transform_orientation_B(R*R_yaw)).as_quat()
+        
+        q_input = q
+        # q_input = Rotation.from_rotvec(yaw*np.array([0,0,1])).as_quat()
+
+        # print(f"yaw = {rad2deg(yaw)}")
+        # print(f"q_input = {q_input}")
+        
+        # print(f"q_ENU = {q_ENU}")
+
+        self.q_input = q_input
+        self.T_input = T
+
+        # print(f"state.Fd = {state.Fd}")
+
+        # print(f"R_input * norm(Fd) * (-e3)  = {(R*R_yaw).as_dcm() @ (-e3) * norm(state.Fd)}")
+        
+
+        # output = concatenate([
+        #                     state.qFd.ravel(),
+        #                     state.Fd.ravel(),
+        #                     0*state.Fd.ravel(),
+        #                     state.I_TLd.ravel(),
+        #                     state.qd.ravel(),
+        #                     state.oqd.ravel(),
+        #                     state.zoq.ravel(),
+        #                     state.u_parallel.ravel(),
+        #                     state.u_perp.ravel(),
+        #                     state.e_q.ravel(),
+        #                     state.e_oq.ravel(),
+        #                     ])
+
         return
 
-
+from time import sleep
+        
 if __name__ == '__main__':
     rospy.init_node('pyquad', anonymous=True)
     quad = MavrosQuad()
     quad.wait_for_topics(10)
+    quad.computeSystemStates()
+    quad.att_thread.start()
+    
+    quad.set_mode("OFFBOARD", 5)
+    quad.set_arm(True, 5)
+
     for i in range(10):
-        quad.computeSystemStates()
+        # print(quad.sub_topics_ready)
+        # quad.computeSystemStates()
         # quad.log_topic_vars()
-        quad.log_states()
-        quad.controller()
+        # quad.log_states()
+        
+        # print(f"qQ = {quad.qQ}")
+        # print(f"                                                    pQ = {quad.pQ.T}")
+
+        # print(f"q_quad_ENU = {quad.q_quad_ENU}")
+
+        # print(f"q_input = {quad.q_input}")
+        # print(f"T_input = {quad.T_input}")
+
+        sleep(1)
