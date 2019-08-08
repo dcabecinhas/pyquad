@@ -56,15 +56,15 @@ class MavrosQuad():
 
         self.local_velocity = TwistStamped()
 
-        self.gazebo_load_name = 'iris_tether::/load_link'
+        self.gazebo_load_name = 'rigid_body_load_1_vehicle::rb_link'
         self.gazebo_load_pose = Pose()
         self.gazebo_load_twist = Twist()
 
-        self.gazebo_quad_name = 'iris_tether::base_link'
+        self.gazebo_quad_name = 'rigid_body_load_1_vehicle::base_link_0'
         self.gazebo_quad_pose = Pose()
         self.gazebo_quad_twist = Twist()
 
-        self.gazebo_imu_name = 'iris_tether::/imu_link'
+        self.gazebo_imu_name = 'rigid_body_load_1_vehicle::iris_0/imu_link'
         self.gazebo_imu_pose = Pose()
         self.gazebo_imu_twist = Twist()
 
@@ -789,16 +789,23 @@ class MavrosQuad():
         # print(f"state.Fd = {state.Fd.ravel()}")
         # print(f"state.u = {state.u.ravel()}")
         
-        e3 = np.array([0,0,1])
-        
+        e3 = np.array([0,0,1]).reshape([3,1])
+
+        #DEBUG
+        state.Fd = - 1*(self.pQ + 2*e3) - 1*self.vQ - mass_quad*g*e3 
+        print("ep = ", (self.pQ + 2*e3))
+        print("ev = ", self.vL)
+        print("Fd = ", state.Fd)
+        print("-----------------")
+
         R = F_vector_to_Rotation(state.Fd)
         
         # print(f"R * norm(Fd) * (-e3)  = {(R).as_dcm() @ (-e3) * norm(state.Fd)}")
 
-        kT = 2
+        kT = 0.75
 
         q = R.as_quat()
-        T = kT*(norm(state.Fd)/(mass_quad*g) - 1.0) + 0.66
+        T = kT*(norm(state.Fd)/(mass_quad*g) - 1.0) + 0.625
 
         T = np.clip(T,0,1)
 
@@ -858,7 +865,7 @@ if __name__ == '__main__':
     quad.set_mode("OFFBOARD", 5)
     quad.set_arm(True, 5)
 
-    for i in range(10):
+    for i in range(1000):
         # print(quad.sub_topics_ready)
         # quad.computeSystemStates()
         # quad.log_topic_vars()

@@ -41,15 +41,15 @@ class MavrosQuad():
 
         self.local_velocity = TwistStamped()
 
-        self.gazebo_load_name = 'iris_tether::/load_link'
+        self.gazebo_load_name = 'rigid_body_load_1_vehicle::rb_link'
         self.gazebo_load_pose = Pose()
         self.gazebo_load_twist = Twist()
 
-        self.gazebo_quad_name = 'iris_tether::base_link'
+        self.gazebo_quad_name = 'rigid_body_load_1_vehicle::base_link_0'
         self.gazebo_quad_pose = Pose()
         self.gazebo_quad_twist = Twist()
 
-        self.gazebo_imu_name = 'iris_tether::/imu_link'
+        self.gazebo_imu_name = 'rigid_body_load_1_vehicle::iris_0/imu_link'
         self.gazebo_imu_pose = Pose()
         self.gazebo_imu_twist = Twist()
 
