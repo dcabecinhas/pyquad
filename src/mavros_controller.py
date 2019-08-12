@@ -71,6 +71,10 @@ class MavrosQuad():
         self.q_input = np.array([0,0,0,1])
         self.T_input = 0
 
+        self.offboard_position_active = True
+        self.offboard_attitude_active = False
+        self.offboard_load_active = False
+
         self.sub_topics_ready = {
             key: False
             for key in [
@@ -136,15 +140,26 @@ class MavrosQuad():
 
         # ROS Publishers
 
+        # Attitude
         self.att = AttitudeTarget()
-
         self.att_setpoint_pub = rospy.Publisher(
             'mavros/setpoint_raw/attitude', AttitudeTarget, queue_size=1)
 
         # send setpoints in seperate thread to better prevent failsafe
         self.att_thread = Thread(target=self.send_att, args=())
         self.att_thread.daemon = True
-        # self.att_thread.start()
+        self.att_thread.start()
+
+        # Pose
+
+        self.pos = PoseStamped()
+        self.pos_setpoint_pub = rospy.Publisher(
+            'mavros/setpoint_position/local', PoseStamped, queue_size=1)
+
+        # send setpoints in seperate thread to better prevent failsafe
+        self.pos_thread = Thread(target=self.send_pos, args=())
+        self.pos_thread.daemon = True
+        self.pos_thread.start()
 
     #
     # Callback functions
@@ -491,10 +506,12 @@ class MavrosQuad():
         self.assertTrue(res.success, (
             "MAV_TYPE param get failed | timeout(seconds): {0}".format(timeout)
         ))
+    
+    # Publish target attitude
 
     def send_att(self):
         try:
-            rate = rospy.Rate(10)  # Hz
+            rate = rospy.Rate(50)  # Hz
             self.att.body_rate = Vector3()
             self.att.header = Header()
             self.att.header.frame_id = "base_footprint"
@@ -510,19 +527,72 @@ class MavrosQuad():
         while not rospy.is_shutdown():
             self.att.header.stamp = rospy.Time.now()
 
-            self.computeSystemStates()
-            self.controller()
+            if(not self.offboard_position_active):
+                self.computeSystemStates()
+                if(self.offboard_attitude_active):
+                    (T,q) = self.controller_attitude()
+                if(self.offboard_load_active):
+                    (T,q) = self.controller_load()
 
-            q_ENU = transform_orientation_I(transform_orientation_B(Rotation.from_quat(self.q_input))).as_quat()
+                q_ENU = transform_orientation_I(transform_orientation_B(Rotation.from_quat(q))).as_quat()
 
-            self.att.orientation = Quaternion(*q_ENU)
-            self.att.thrust = self.T_input
-            
-            self.att_setpoint_pub.publish(self.att)
+                self.att.orientation = Quaternion(*q_ENU)
+                self.att.thrust = T
+                
+                self.att_setpoint_pub.publish(self.att)
+
             try:  # prevent garbage in console output when thread is killed
                 rate.sleep()
             except rospy.ROSInterruptException:
                 pass
+
+    # Publish target position
+
+    def send_pos(self):
+        rate = rospy.Rate(5)  # Hz
+        self.pos.header = Header()
+        self.pos.header.frame_id = "base_footprint"
+
+        while not rospy.is_shutdown():
+            self.pos.header.stamp = rospy.Time.now()
+            
+            # while True:
+            t = rospy.get_time()
+
+            if (t % 20 < 10):
+                self.pd = np.array([0,0,-2]).reshape([3,1])
+                self.Dpd = np.array([0,0,0]).reshape([3,1])
+                self.D2pd = np.array([0,0,0]).reshape([3,1])
+            else:
+                self.pd = np.array([2,0,-2]).reshape([3,1])
+                self.Dpd = np.array([0,0,0]).reshape([3,1])
+                self.D2pd = np.array([0,0,0]).reshape([3,1])
+
+            if(self.offboard_position_active):
+                pd = self.controller_position()
+
+                pd_ENU = transform_position_I(pd)
+
+                # set a position setpoint
+                self.pos.pose.position.x = pd_ENU[0]
+                self.pos.pose.position.y = pd_ENU[1]
+                self.pos.pose.position.z = pd_ENU[2]
+                
+                # set yaw angle
+                yaw_degrees = 90
+                yaw = math.radians(yaw_degrees)
+                quaternion = transform_orientation_I(transform_orientation_B((
+                    Rotation.from_euler('zyx', [yaw,0,0])
+                    ))).as_quat()
+                self.pos.pose.orientation = Quaternion(*quaternion)
+
+                self.pos_setpoint_pub.publish(self.pos)
+
+            try:  # prevent garbage in console output when thread is killed
+                rate.sleep()
+            except rospy.ROSInterruptException:
+                pass
+
 
     def log_topic_vars(self):
         """log the state of topic variables"""
@@ -565,10 +635,10 @@ class MavrosQuad():
         # rospy.loginfo(f"qL: {self.qL.T}")
         # rospy.loginfo(f"oL: {self.oL.T}")
         # # rospy.loginfo(f"R: {self.R}")
-        # rospy.loginfo(f"R (in RPY): {(Rotation.from_dcm(self.RQ)).as_euler('xyz')}")
+        # rospy.loginfo(f"R (in RPY): {(Rotation.from_dcm(self.RQ)).as_euler('zyx')}")
         # rospy.loginfo(f"R (in quat): {(Rotation.from_dcm(self.RQ)).as_quat()}")
         # rospy.loginfo(f"o: {self.oQ.T}")
-        # rospy.loginfo(f"R_imu (in RPY): {(Rotation.from_dcm(self.R_imu)).as_euler('xyz')}")
+        # rospy.loginfo(f"R_imu (in RPY): {(Rotation.from_dcm(self.R_imu)).as_euler('zyx')}")
         # rospy.loginfo(f"R_imu (in quat): {(Rotation.from_dcm(self.R_imu)).as_quat()}")
         # rospy.loginfo(f"o_imu: {self.o_imu.T}")
         rospy.loginfo(f"pQ: {self.pQ.T}")
@@ -722,19 +792,29 @@ class MavrosQuad():
         self.pL = transform_position_I(p_load_ENU.reshape([3,1]))
         self.vL = transform_position_I(v_load_ENU.reshape([3,1]))
 
-        self.pQ = transform_position_I(p_quad_ENU.reshape([3,1]))
-        self.vQ = transform_position_I(v_quad_ENU.reshape([3,1]))
+        # self.pQ = transform_position_I(p_quad_ENU.reshape([3,1]))
+        # self.vQ = transform_position_I(v_quad_ENU.reshape([3,1]))
+
+        self.pQ = transform_position_I(gazebo_p_quad_ENU.reshape([3,1]))
+        self.vQ = transform_position_I(gazebo_v_quad_ENU.reshape([3,1]))
 
         self.q = (self.pL - self.pQ) / norm(self.pL - self.pQ)
         self.o = self.q @ self.q.T @ (self.vL - self.vQ) / norm(self.pL - self.pQ)
         
-        self.qQ = transform_orientation_I(transform_orientation_B((Rotation.from_quat(q_quad_ENU)))).as_quat()
-        self.RQ = transform_orientation_I(transform_orientation_B((Rotation.from_dcm(R_quad_ENU)))).as_dcm()
-        self.oQ = transform_omega_B(o_quad_ENU).reshape([3,1])
+        # self.qQ = transform_orientation_I(transform_orientation_B((Rotation.from_quat(q_quad_ENU)))).as_quat()
+        # self.RQ = transform_orientation_I(transform_orientation_B((Rotation.from_dcm(R_quad_ENU)))).as_dcm()
+        # self.oQ = transform_omega_B(o_quad_ENU).reshape([3,1])
+
+        self.qQ = transform_orientation_I(transform_orientation_B((Rotation.from_quat(gazebo_q_quad_ENU)))).as_quat()
+        self.RQ = transform_orientation_I(transform_orientation_B((Rotation.from_dcm(gazebo_R_quad_ENU)))).as_dcm()
+        self.oQ = transform_omega_B(gazebo_o_quad_ENU).reshape([3,1])
         
         self.qL = transform_orientation_I(transform_orientation_B((Rotation.from_quat(gazebo_q_load_ENU)))).as_quat()
         self.RL = transform_orientation_I(transform_orientation_B((Rotation.from_dcm(gazebo_R_load_ENU)))).as_dcm()
         self.oL = transform_omega_B(gazebo_o_load_ENU).reshape([3,1])
+
+        # print(f'length (ROS) = {norm(self.pL - self.pQ)}')
+        # print(f'length (Gazebo) = {norm(self.gazebo_pL - self.gazebo_pQ)}')
 
         return
 
@@ -756,7 +836,7 @@ class MavrosQuad():
         rospy.loginfo(f'oL: {(self.oL - self.gazebo_oL).T}')
         return
 
-    def controller(self):
+    def controller_load(self):
 
         self.RL = np.eye(3)
         self.oL = np.zeros([3,1])
@@ -786,14 +866,10 @@ class MavrosQuad():
 
         # # All the same for single-quadrotor
         # print(f"state.qFd = {state.qFd.ravel()}")
-        # print(f"state.Fd = {state.Fd.ravel()}")
+        print(f"state.Fd = {state.Fd.ravel()}")
         # print(f"state.u = {state.u.ravel()}")
-        
-        e3 = np.array([0,0,1]).reshape([3,1])
-
-        #DEBUG
-        state.Fd = - 1*(self.pQ + 2*e3) - 1*self.vQ - mass_quad*g*e3 
-        print("ep = ", (self.pQ + 2*e3))
+      
+        print("ep = ", (self.pQ - state.pd))
         print("ev = ", self.vL)
         print("Fd = ", state.Fd)
         print("-----------------")
@@ -802,7 +878,7 @@ class MavrosQuad():
         
         # print(f"R * norm(Fd) * (-e3)  = {(R).as_dcm() @ (-e3) * norm(state.Fd)}")
 
-        kT = 0.75
+        kT = 1.0
 
         q = R.as_quat()
         T = kT*(norm(state.Fd)/(mass_quad*g) - 1.0) + 0.625
@@ -827,11 +903,6 @@ class MavrosQuad():
         # print(f"yaw = {rad2deg(yaw)}")
         # print(f"q_input = {q_input}")
         
-        # print(f"q_ENU = {q_ENU}")
-
-        self.q_input = q_input
-        self.T_input = T
-
         # print(f"state.Fd = {state.Fd}")
 
         # print(f"R_input * norm(Fd) * (-e3)  = {(R*R_yaw).as_dcm() @ (-e3) * norm(state.Fd)}")
@@ -851,32 +922,103 @@ class MavrosQuad():
         #                     state.e_oq.ravel(),
         #                     ])
 
-        return
+        return (T, q)
+
+
+    def controller_attitude(self):
+
+        e3 = np.array([0,0,1]).reshape([3,1])
+
+        kp = np.array([1,1,0.5]).reshape([3,1])
+        kv = np.array([1,1,0.5]).reshape([3,1])
+
+        # PD controller for position
+
+        Fd = - kp*(self.pQ - self.pd) - kv*(self.vQ - self.Dpd) + mass_quad*self.D2pd - mass_quad*g*e3
+
+        R = F_vector_to_Rotation(Fd)
+        
+        # print(f"R * norm(Fd) * (-e3)  = {(R).as_dcm() @ (-e3) * norm(state.Fd)}")
+
+        kT = 1.0
+
+        q = R.as_quat()
+        T = kT*(norm(Fd)/(mass_quad*g) - 1.0) + 0.625
+
+        T = np.clip(T,0,1)
+
+        # print(f"q_input = {q}")
+        # print(f"T_input = {T}")
+
+        yaw = deg2rad(90)
+        R_yaw = Rotation.from_rotvec(yaw*np.array([0,0,1]))
+        
+        # YRP = Rotation.from_quat(self.qQ).as_euler('zyx')
+        # R_yaw = Rotation.from_rotvec(YRP[0]*np.array([0,0,1]))
+        
+        q = (R*R_yaw).as_quat()
+    
+        return (T, q)
+
+
+    def controller_position(self):
+        return self.pd
+
 
 from time import sleep
         
 if __name__ == '__main__':
     rospy.init_node('pyquad', anonymous=True)
     quad = MavrosQuad()
-    quad.wait_for_topics(10)
-    quad.computeSystemStates()
-    quad.att_thread.start()
+
+    print("Waiting for topics...")
+    quad.wait_for_topics(20)
     
+    quad.computeSystemStates()
+    
+    print("Set mode OFFBOARD...")
     quad.set_mode("OFFBOARD", 5)
+
+    print("ARM...")
     quad.set_arm(True, 5)
 
-    for i in range(1000):
-        # print(quad.sub_topics_ready)
-        # quad.computeSystemStates()
-        # quad.log_topic_vars()
-        # quad.log_states()
+    # for i in range(1000):
+    #     print(quad.sub_topics_ready)
+    #     quad.computeSystemStates()
+    #     quad.log_topic_vars()
+    #     quad.log_states()
         
-        # print(f"qQ = {quad.qQ}")
-        # print(f"                                                    pQ = {quad.pQ.T}")
+    #     print(f"qQ = {quad.qQ}")
+    #     print(f"                                                    pQ = {quad.pQ.T}")
 
-        # print(f"q_quad_ENU = {quad.q_quad_ENU}")
+    #     print(f"q_quad_ENU = {quad.q_quad_ENU}")
 
-        # print(f"q_input = {quad.q_input}")
-        # print(f"T_input = {quad.T_input}")
+    #     print(f"q_input = {quad.q_input}")
+    #     print(f"T_input = {quad.T_input}")
 
-        sleep(1)
+    #     sleep(1)
+
+    while True:
+
+        print("Now listening for options (1,2,3) - 0 to exit:")
+        c = input()[0]
+
+        if(c=='1'):
+            print("* Position control *")
+            quad.offboard_position_active = True
+            quad.offboard_attitude_active = False
+            quad.offboard_load_active = False
+        if(c=='2'):
+            print("* Attitude control *")
+            quad.offboard_position_active = False
+            quad.offboard_attitude_active = True
+            quad.offboard_load_active = False
+
+        if(c=='3'):
+            print("* Load control *")
+            quad.offboard_position_active = False
+            quad.offboard_attitude_active = False
+            quad.offboard_load_active = True
+
+        if(c=='0'):
+            break

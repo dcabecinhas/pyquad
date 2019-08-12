@@ -99,7 +99,7 @@ kqo = 10
 TL_repulsive_gain = 0.0
 TL_damping = 0.0
 
-mL = 1.150
+mL = 0.3
 mass_quad = 1.280
 mQ = mass_quad * ones([n_cables,1,1])
 
@@ -179,11 +179,13 @@ args = {rx:1,
 
 
 # Trajectory definition
+rx = 0
+ry = 0
 omega_x = 0
 omega_y = 0
 p_symb = sp.Matrix([rx*sp.sin(omega_x*t+theta_x),
                     ry*sp.sin(omega_y*t+theta_y),
-                     -2.00 + 0*t])
+                     -1.50 + 0*t])
 
 
 # In[ ]:
