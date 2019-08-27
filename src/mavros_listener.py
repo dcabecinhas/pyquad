@@ -664,7 +664,7 @@ class MavrosQuad():
         self.vQ = transform_position_I(v_quad_ENU.reshape([3,1]))
 
         self.q = (self.pL - self.pQ) / norm(self.pL - self.pQ)
-        self.o = self.q @ self.q.T @ (self.vL - self.vQ) / norm(self.pL - self.pQ)
+        self.o = (np.eye(3) - self.q @ self.q.T) @ (self.vL - self.vQ) / norm(self.pL - self.pQ)
         
         self.qQ = transform_orientation_I(transform_orientation_B((Rotation.from_quat(q_quad_ENU)))).as_quat()
         self.RQ = transform_orientation_I(transform_orientation_B((Rotation.from_dcm(R_quad_ENU)))).as_dcm()

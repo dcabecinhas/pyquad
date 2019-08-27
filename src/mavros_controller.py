@@ -28,6 +28,11 @@ from frame_conversions import *
 from std_msgs.msg import Header
 from threading import Thread
 
+np.set_printoptions(precision=4)
+np.set_printoptions(suppress=True)
+np.set_printoptions(floatmode="fixed")
+np.set_printoptions(sign=" ")
+
 def F_vector_to_Rotation(F):
     F = F.ravel()
     e3 = np.array([0,0,1])
@@ -533,8 +538,15 @@ class MavrosQuad():
                     (T,q) = self.controller_attitude()
                 if(self.offboard_load_active):
                     (T,q) = self.controller_load()
+                    # print(f"q_input = {q}")
+                    # print(f"T_input = {T}")
 
                 q_ENU = transform_orientation_I(transform_orientation_B(Rotation.from_quat(q))).as_quat()
+
+                # print(f"q_input_ENU = {q_ENU}")
+                # print(f"T_input = {T}")
+                # print(f"q_quad_ENU = {self.gazebo_q_quad_ENU}")
+
 
                 self.att.orientation = Quaternion(*q_ENU)
                 self.att.thrust = T
@@ -559,15 +571,10 @@ class MavrosQuad():
             # while True:
             t = rospy.get_time()
 
-            if (t % 20 < 10):
-                self.pd = np.array([0,0,-2]).reshape([3,1])
-                self.Dpd = np.array([0,0,0]).reshape([3,1])
-                self.D2pd = np.array([0,0,0]).reshape([3,1])
-            else:
-                self.pd = np.array([2,0,-2]).reshape([3,1])
-                self.Dpd = np.array([0,0,0]).reshape([3,1])
-                self.D2pd = np.array([0,0,0]).reshape([3,1])
-
+            self.pd = np.array([0,0,-1]).reshape([3,1])
+            self.Dpd = np.array([0,0,0]).reshape([3,1])
+            self.D2pd = np.array([0,0,0]).reshape([3,1])
+            
             if(self.offboard_position_active):
                 pd = self.controller_position()
 
@@ -579,7 +586,7 @@ class MavrosQuad():
                 self.pos.pose.position.z = pd_ENU[2]
                 
                 # set yaw angle
-                yaw_degrees = 90
+                yaw_degrees = 0
                 yaw = math.radians(yaw_degrees)
                 quaternion = transform_orientation_I(transform_orientation_B((
                     Rotation.from_euler('zyx', [yaw,0,0])
@@ -719,6 +726,7 @@ class MavrosQuad():
                                     self.gazebo_quad_pose.orientation.y,
                                     self.gazebo_quad_pose.orientation.z,
                                     self.gazebo_quad_pose.orientation.w])
+        self.gazebo_q_quad_ENU = gazebo_q_quad_ENU
 
         gazebo_R_quad_ENU = Rotation.from_quat(gazebo_q_quad_ENU).as_dcm()
 
@@ -789,8 +797,8 @@ class MavrosQuad():
 
         # Convert all measurements to NED and compute auxiliar states
         
-        self.pL = transform_position_I(p_load_ENU.reshape([3,1]))
-        self.vL = transform_position_I(v_load_ENU.reshape([3,1]))
+        self.pL = transform_position_I(gazebo_p_load_ENU.reshape([3,1]))
+        self.vL = transform_position_I(gazebo_v_load_ENU.reshape([3,1]))
 
         # self.pQ = transform_position_I(p_quad_ENU.reshape([3,1]))
         # self.vQ = transform_position_I(v_quad_ENU.reshape([3,1]))
@@ -799,8 +807,9 @@ class MavrosQuad():
         self.vQ = transform_position_I(gazebo_v_quad_ENU.reshape([3,1]))
 
         self.q = (self.pL - self.pQ) / norm(self.pL - self.pQ)
-        self.o = self.q @ self.q.T @ (self.vL - self.vQ) / norm(self.pL - self.pQ)
-        
+        self.dq = (np.eye(3) - self.q @ self.q.T) @ (self.vL - self.vQ) / norm(self.pL - self.pQ)
+        self.o = skew(self.q) @ self.dq 
+
         # self.qQ = transform_orientation_I(transform_orientation_B((Rotation.from_quat(q_quad_ENU)))).as_quat()
         # self.RQ = transform_orientation_I(transform_orientation_B((Rotation.from_dcm(R_quad_ENU)))).as_dcm()
         # self.oQ = transform_omega_B(o_quad_ENU).reshape([3,1])
@@ -843,6 +852,28 @@ class MavrosQuad():
         self.delta_TLd = np.zeros(n_cables*n_dims)
         self.V = np.zeros([1,1])
 
+        t = rospy.get_time() - self.t0
+        dt = t - self.t_prev
+        self.t_prev = t
+        # print(f"==========    t = {t:.3} / dt = {dt:.3}   ==========")
+        # print(f"self.pL = {self.pL.ravel()}")
+        # print(f"self.vL = {self.vL.ravel()}")
+        # print(f"self.pQ = {self.pQ.ravel()}")
+        # print(f"self.vQ = {self.vQ.ravel()}")
+        # print(f"self.RL = {self.RL.ravel()}")
+        # print(f"self.oL = {self.oL.ravel()}")
+        # print(f"self.delta_TLd = {self.delta_TLd.ravel()}")
+        # print(f"self.q  = {self.q.ravel()}")
+        # print(f"self.o  = {self.o.ravel()}")
+        # print(f"self.RQ = {self.RQ.ravel()}")
+        # print(f"self.oQ = {self.oQ.ravel()}")
+        # print(f"self.qQ = {self.qQ.ravel()}")
+        e3 = np.array([0,0,1]).reshape([3,1])
+        r3 = self.RQ @ e3 
+        # print(f"r3Q     = {r3.ravel()}")
+        # print(f"oQ      = {self.oQ.ravel()}")
+        # print("===================================")
+        
         y = pack_state(self.pL,
                     self.vL,
                     self.RL,
@@ -866,29 +897,55 @@ class MavrosQuad():
 
         # # All the same for single-quadrotor
         # print(f"state.qFd = {state.qFd.ravel()}")
-        print(f"state.Fd = {state.Fd.ravel()}")
+        # print(f"pd     = {state.pd.ravel()}")
+        # print(f"state.dpd = {state.dpd.ravel()}")
+        # print(f"state.d2pd = {state.d2pd.ravel()}")
+        # print(f"Fd_L   = {state.Fd.ravel()}")
+        # print(f"Fd_Q   = {state.u.ravel()}")
+
+        r3_d = (- state.u / norm(state.u)).reshape(3,1)
+        # print(f"r3_Q   = {r3_d.ravel()}")
+
+        # print(f"r3 err = {180/np.pi * np.arccos(r3.T @ r3_d)}")
+
+        qd = state.qd.reshape(3,1)
+        # print(f"qd     = {state.qd.ravel()}")
+        # print(f"qd err = {180/np.pi * np.arccos(self.q.T @ qd)}")
+        # print("")
+        # print("")
         # print(f"state.u = {state.u.ravel()}")
       
-        print("ep = ", (self.pQ - state.pd))
-        print("ev = ", self.vL)
-        print("Fd = ", state.Fd)
-        print("-----------------")
 
-        R = F_vector_to_Rotation(state.Fd)
+        # print(f"q      = {self.q.ravel()}")
+        # print(f"qd     = {state.qd.ravel()}")
+        # print(f"qd err = {180/np.pi * np.arccos(self.q.T @ qd)}")
+
+        # print(f"r3     = {r3.ravel()}")
+        # print(f"r3_Q   = {r3_d.ravel()}")
+        # print(f"r3 err = {180/np.pi * np.arccos(r3.T @ r3_d)}")
+
+        # print("ep = ", (self.pL - state.pd))
+        # print("ev = ", self.vL)
+        # print("Fd = ", state.Fd)
+        # print("-----------------")
+
+        R = F_vector_to_Rotation(state.u)
         
         # print(f"R * norm(Fd) * (-e3)  = {(R).as_dcm() @ (-e3) * norm(state.Fd)}")
 
         kT = 1.0
 
         q = R.as_quat()
-        T = kT*(norm(state.Fd)/(mass_quad*g) - 1.0) + 0.625
+        T = kT*(norm(state.u)/((mass_quad+mL)*g) - 1.0) + 0.625
 
         T = np.clip(T,0,1)
 
         # print(f"q_input = {q}")
         # print(f"T_input = {T}")
+        # print("")
+        # print("")
 
-        yaw = deg2rad(90)
+        yaw = deg2rad(0)
         R_yaw = Rotation.from_rotvec(yaw*np.array([0,0,1]))
         
         # YRP = Rotation.from_quat(self.qQ).as_euler('zyx')
@@ -897,12 +954,12 @@ class MavrosQuad():
         q = (R*R_yaw).as_quat()
         # q_ENU = transform_orientation_I(transform_orientation_B(R*R_yaw)).as_quat()
         
-        q_input = q
+        # q_input = q
         # q_input = Rotation.from_rotvec(yaw*np.array([0,0,1])).as_quat()
 
         # print(f"yaw = {rad2deg(yaw)}")
-        # print(f"q_input = {q_input}")
-        
+        # print(f"q_input = {q}")
+        # print(f"T_input = {T}")
         # print(f"state.Fd = {state.Fd}")
 
         # print(f"R_input * norm(Fd) * (-e3)  = {(R*R_yaw).as_dcm() @ (-e3) * norm(state.Fd)}")
@@ -950,7 +1007,7 @@ class MavrosQuad():
         # print(f"q_input = {q}")
         # print(f"T_input = {T}")
 
-        yaw = deg2rad(90)
+        yaw = deg2rad(0)
         R_yaw = Rotation.from_rotvec(yaw*np.array([0,0,1]))
         
         # YRP = Rotation.from_quat(self.qQ).as_euler('zyx')
@@ -972,7 +1029,7 @@ if __name__ == '__main__':
     quad = MavrosQuad()
 
     print("Waiting for topics...")
-    quad.wait_for_topics(20)
+    quad.wait_for_topics(30)
     
     quad.computeSystemStates()
     
@@ -1001,7 +1058,10 @@ if __name__ == '__main__':
     while True:
 
         print("Now listening for options (1,2,3) - 0 to exit:")
-        c = input()[0]
+        try:
+            c = input()[0]
+        except:
+            continue
 
         if(c=='1'):
             print("* Position control *")
@@ -1016,6 +1076,8 @@ if __name__ == '__main__':
 
         if(c=='3'):
             print("* Load control *")
+            quad.t0 = rospy.get_time()
+            quad.t_prev = -0.01
             quad.offboard_position_active = False
             quad.offboard_attitude_active = False
             quad.offboard_load_active = True

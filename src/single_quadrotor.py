@@ -34,7 +34,7 @@ n_cables = 1
 n_dims = 3
 
 # TODO: Different cable lengths for different cables
-cable_length = 1.23
+cable_length = 0.8
 
 # Array of cable lengths
 lq = cable_length * ones(n_cables).reshape(-1,1,1)
@@ -78,7 +78,7 @@ TLD_DERIVATIVES_ZERO = False
 # In[ ]:
 
 
-L_q = 50
+L_q = 100
 L_oq = 10
 
 L_qR = 100
@@ -89,8 +89,8 @@ kv = 1.0
 
 x_pv = (kp + kv) / 2
 
-kq = 20
-koq = 5
+kq = 100
+koq = 10
 
 kqR = 100
 kqo = 10
@@ -100,7 +100,7 @@ TL_repulsive_gain = 0.0
 TL_damping = 0.0
 
 mL = 0.3
-mass_quad = 1.280
+mass_quad = 1.50
 mQ = mass_quad * ones([n_cables,1,1])
 
 g = 9.8
@@ -493,6 +493,13 @@ def F_feedback(state):
              - kv*(v-dpd) 
              - g*e3 
              + d2pd)
+
+    # print('In inner controller:')
+    # print('F = ', F.ravel())
+    # print('- kp*(p-pd)  = ', - kp*(p-pd) )
+    # print('- kv*(v-dpd)  = ', - kv*(v-dpd) )
+    # print('- g*e3  = ', - g*e3 )
+    # print('+ d2pd = ', + d2pd)
     
     try:
         dv = state.dv
@@ -894,7 +901,7 @@ def process_state(t,y):
     # Actuation with cross-terms
     if not NO_U_PERP_CROSS_TERMS:
         u_perp = u_perp_d
-    
+
     
     state.u_perp_d = u_perp_d
     
