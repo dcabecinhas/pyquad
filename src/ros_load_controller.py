@@ -436,6 +436,20 @@ class ROSLoadController():
         kp = np.array([1,1,0.5]).reshape([3,1])
         kv = np.array([1,1,0.5]).reshape([3,1])
 
+        # Reference
+
+        self.pd = np.array([[
+            [ 1.0, -1.0, -1.0],
+            [-1.0, -1.0, -1.0],
+            [-1.0,  1.0, -1.0],
+            [ 1.0,  1.0, -1.0]
+            ]]).reshape(-1,3,1)
+        self.Dpd = 0*self.pd
+        self.D2pd = 0*self.pd
+
+        # print('self.pQ = ', self.pQ)
+        # print('self.pd = ', self.pd)
+
         # PD controller for position
 
         Fd = - kp*(self.pQ - self.pd) - kv*(self.vQ - self.Dpd) + mass_quad*self.D2pd - mass_quad*g*e3

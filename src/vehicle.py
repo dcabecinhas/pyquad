@@ -2,6 +2,9 @@
 
 # from single_quadrotor import *
 
+from threading import Thread
+from time import sleep
+
 import rospy
 # import math
 
@@ -60,6 +63,52 @@ class Vehicle():
         self.wp_push_srv = rospy.ServiceProxy(f'uav_{self.ID}/mavros/mission/push',
                                               WaypointPush)
 
+        self.state_sub = rospy.Subscriber(f'uav_{self.ID}/mavros/state', 
+                                                    State,
+                                                    self.state_callback)
+
+        # ROS subscribers
+        self.sub_topics_ready = {
+            key: False
+            for key in [
+                'state'
+            ]
+        }
+        
+        # send setpoints in seperate thread to better prevent failsafe
+        self.thread = Thread(target=self.activate, args=())
+        self.thread.daemon = True
+        # self.thread.start()
+
+
+    #
+    # Callback functions
+    #
+    def state_callback(self, data):
+        if self.state.armed != data.armed:
+            rospy.loginfo("armed state changed from {0} to {1}".format(
+                self.state.armed, data.armed))
+
+        if self.state.connected != data.connected:
+            rospy.loginfo("connected changed from {0} to {1}".format(
+                self.state.connected, data.connected))
+
+        if self.state.mode != data.mode:
+            rospy.loginfo("mode changed from {0} to {1}".format(
+                self.state.mode, data.mode))
+
+        if self.state.system_status != data.system_status:
+            rospy.loginfo("system_status changed from {0} to {1}".format(
+                mavutil.mavlink.enums['MAV_STATE'][
+                    self.state.system_status].name, mavutil.mavlink.enums[
+                        'MAV_STATE'][data.system_status].name))
+
+        self.state = data
+
+        # mavros publishes a disconnected state message on init
+        if not self.sub_topics_ready['state'] and data.connected:
+            self.sub_topics_ready['state'] = True
+            
     #
     # Helper methods
     #
@@ -128,8 +177,34 @@ class Vehicle():
         if(not result):
             rospy.loginfo(text)
 
-from time import sleep
-        
+    def wait_for_topics(self, timeout):
+            """wait for simulation to be ready, make sure we're getting topic info
+            from all topics by checking dictionary of flag values set in callbacks,
+            timeout(int): seconds"""
+            rospy.loginfo("waiting for subscribed topics to be ready")
+            loop_freq = 1  # Hz
+            rate = rospy.Rate(loop_freq)
+            simulation_ready = False
+            for i in range(timeout * loop_freq):
+                if all([value for value in self.sub_topics_ready.values()]):
+                    simulation_ready = True
+                    rospy.loginfo("simulation topics ready | seconds: {0} of {1}".
+                                format(i / loop_freq, timeout))
+                    break
+
+                try:
+                    rate.sleep()
+                except rospy.ROSException as e:
+                    rospy.logerr(e)
+
+            self.assertTrue(simulation_ready, (
+                "failed to hear from all subscribed simulation topics | topic ready flags: {0} | timeout(seconds): {1}".
+                format(self.sub_topics_ready, timeout)))
+                
+    def activate(self):
+        self.set_mode("OFFBOARD", 3)
+        self.set_arm(True, 3)
+
 if __name__ == '__main__':
     rospy.init_node('pyquad', anonymous=True)
     
@@ -137,19 +212,21 @@ if __name__ == '__main__':
 
     quad_list = []
     for i in range(number_of_vehicles):
-        
         print(f"[{i}] Start vehicle object...")
         quad = Vehicle(ID=i)
+        quad.wait_for_topics(10)
+
+        quad.thread.start()
         quad_list.append(quad)
+        
+    # for i in range(number_of_vehicles):
+    #     # Run each in a thread
+    #     print(f"[{i}] Set mode OFFBOARD...")
+    #     quad_list[i].set_mode("OFFBOARD", 5)
 
-    for i in range(number_of_vehicles):
-        # Run each in a thread
-        print(f"[{i}] Set mode OFFBOARD...")
-        quad_list[i].set_mode("OFFBOARD", 5)
-
-    for i in range(number_of_vehicles):
-        print(f"[{i}] ARM...")
-        quad_list[i].set_arm(True, 5)
+    # for i in range(number_of_vehicles):
+    #     print(f"[{i}] ARM...")
+    #     quad_list[i].set_arm(True, 5)
 
     while True:
 
