@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
-from point_mass_4_vehicles import *
+# from point_mass_4_vehicles import skew, mt, pack_state, process_state, n_cables, n_dims, mass_quad, g
+from rigid_body_4_vehicles import skew, mt, pack_state, process_state, n_cables, n_dims, mass_quad, g, state_sizes, rho
 
 import rospy
 import math
@@ -14,10 +15,11 @@ from geometry_msgs.msg import PoseStamped, WrenchStamped, Quaternion, Vector3
 from std_msgs.msg import Header
 from mavros_msgs.msg import AttitudeTarget
 
-from frame_conversions import *
+from frame_conversions import transform_orientation_I, transform_orientation_B, transform_position_I, transform_position_B, transform_omega_B
 
 from threading import Thread
 
+import time
 from time import sleep
 
 np.set_printoptions(precision=4)
@@ -40,6 +42,9 @@ def F_vector_to_Rotation(F):
 class ROSLoadController():
 
     def __init__(self, number_of_vehicles = 1, vehicle_prefix = 'iris_', cable_prefix = 'cable_', load_prefix = 'load', mavros_prefix = 'uav_' ):
+
+        self.log = np.zeros([1+sum(state_sizes),10000])
+
         # super(ROSLoadController, self).__init__()
         self.n = number_of_vehicles
 
@@ -332,9 +337,11 @@ class ROSLoadController():
         # static const auto NED_ENU_Q = quaternion_from_rpy(M_PI, 0.0, M_PI_2);
         
         # compute auxiliar states
-
-        self.q = (self.pL - self.pQ) / norm(self.pL - self.pQ, axis=-2, keepdims=True)
-        self.dq = - skew(self.q) @ skew(self.q) @ (self.vL - self.vQ) / norm(self.pL - self.pQ, axis=-2, keepdims=True)
+        self.pL_RB = self.pL + self.RL @ rho
+        self.vL_RB = self.vL + self.RL @ skew(self.oL) @ rho
+        
+        self.q = (self.pL_RB - self.pQ) / norm(self.pL_RB - self.pQ, axis=-2, keepdims=True)
+        self.dq = - skew(self.q) @ skew(self.q) @ (self.vL_RB - self.vQ) / norm(self.pL_RB - self.pQ, axis=-2, keepdims=True)
         self.o = skew(self.q) @ self.dq 
 
         # print('pL = ', self.pL)
@@ -388,7 +395,7 @@ class ROSLoadController():
                     self.V)
         
         try:
-            dy, state = process_state(0,transpose(y))
+            dy, state = process_state(t,y.T)
         except Exception as e:
             print("Couldn't compute state")
             print(e)
@@ -408,7 +415,10 @@ class ROSLoadController():
         q = R.as_quat().reshape(-1,4,1)
 
         # FIXME
-        T = kT*(norm(state.u, axis=-2, keepdims=True)/((mass_quad)*g) - 1.0) + 0.625
+        T = kT*(norm(state.u, axis=-2, keepdims=True)/((mass_quad)*g) - 1.0) + 0.525
+
+        print("u = ", state.u)
+        print("T = ", T)
 
         # print(f"state.u.shape = {state.u.shape}")
         # print(f"R.shape = {R.shape}")
@@ -417,7 +427,7 @@ class ROSLoadController():
 
         T = np.clip(T,0,1)
 
-        yaw = deg2rad(0)
+        yaw = np.deg2rad(0)
         R_yaw = Rotation.from_rotvec(yaw*np.array([0,0,1]))
                 
         q = (R*R_yaw).as_quat()
@@ -425,6 +435,28 @@ class ROSLoadController():
         # print('u = ', state.u)
         # print('T = ', T)
         # print('q = ', q)
+
+        # print("Fd = ", state.Fd)
+        # print("Md = ", state.Md)
+        # print("R = ", state.R)
+        # print("Rd = ", state.Rd)
+        # print("q = ", state.q)
+        # print("qd = ", state.qd)
+
+        state_vector = np.vstack([state.p.reshape(-1,1),
+                   state.v.reshape(-1,1),
+                   state.R.reshape(-1,1),
+                   state.o.reshape(-1,1),
+                   state.delta_TLd.reshape(-1,1),
+                   state.q.reshape(-1,1),
+                   state.oq.reshape(-1,1),
+                   state.qR.reshape(-1,1),
+                   state.qo.reshape(-1,1),
+                   state.V.reshape(-1,1),])
+
+        self.log[:-1,self.k] = state_vector.ravel()
+        self.log[-1,self.k] = t
+        self.k = self.k + 1
 
         return (T, q)
 
@@ -439,10 +471,10 @@ class ROSLoadController():
         # Reference
 
         self.pd = np.array([[
-            [ 1.0, -1.0, -1.0],
-            [-1.0, -1.0, -1.0],
-            [-1.0,  1.0, -1.0],
-            [ 1.0,  1.0, -1.0]
+            [ 1.2/2,  0.8/2, -2.5],
+            [-1.2/2,  0.8/2, -2.5],
+            [-1.2/2, -0.8/2, -2.5],
+            [ 1.2/2, -0.8/2, -2.5]
             ]]).reshape(-1,3,1)
         self.Dpd = 0*self.pd
         self.D2pd = 0*self.pd
@@ -465,7 +497,7 @@ class ROSLoadController():
 
         T = np.clip(T,0,1)
 
-        yaw = deg2rad(0)
+        yaw = np.deg2rad(0)
         R_yaw = Rotation.from_rotvec(yaw*np.array([0,0,1]))
         
         q = (R*R_yaw).as_quat()
@@ -478,7 +510,10 @@ class ROSLoadController():
 
         
 if __name__ == '__main__':
+    print("Initializing node...")
     rospy.init_node('pyquad', anonymous=True)
+    
+    print("Initializing Controller...")
     load_controller = ROSLoadController(number_of_vehicles=4)
 
     print("Waiting for topics...")
@@ -509,10 +544,13 @@ if __name__ == '__main__':
         if(c=='3'):
             print("* Load control *")
             load_controller.t0 = rospy.get_time()
+            load_controller.k = 0
             load_controller.t_prev = -0.01
             load_controller.position_active = False
             load_controller.attitude_active = False
             load_controller.load_active = True
 
         if(c=='0'):
+            filename = time.strftime("%Y%m%d_%H%M%S_ros_load_controller.log") 
+            np.save(filename, load_controller.log)
             break

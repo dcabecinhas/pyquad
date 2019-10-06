@@ -116,7 +116,7 @@ class Vehicle():
         """arm: True to arm or False to disarm, timeout(int): seconds"""
         rospy.loginfo("setting FCU arm: {0}".format(arm))
         old_arm = self.state.armed
-        loop_freq = 1  # Hz
+        loop_freq = 10  # Hz
         rate = rospy.Rate(loop_freq)
         arm_set = False
         for i in range(timeout * loop_freq):
@@ -147,7 +147,7 @@ class Vehicle():
         """mode: PX4 mode string, timeout(int): seconds"""
         rospy.loginfo("setting FCU mode: {0}".format(mode))
         old_mode = self.state.mode
-        loop_freq = 1  # Hz
+        loop_freq = 10  # Hz
         rate = rospy.Rate(loop_freq)
         mode_set = False
         for i in range(timeout * loop_freq):
@@ -182,7 +182,7 @@ class Vehicle():
             from all topics by checking dictionary of flag values set in callbacks,
             timeout(int): seconds"""
             rospy.loginfo("waiting for subscribed topics to be ready")
-            loop_freq = 1  # Hz
+            loop_freq = 10  # Hz
             rate = rospy.Rate(loop_freq)
             simulation_ready = False
             for i in range(timeout * loop_freq):
@@ -214,9 +214,12 @@ if __name__ == '__main__':
     for i in range(number_of_vehicles):
         print(f"[{i}] Start vehicle object...")
         quad = Vehicle(ID=i)
-        quad.wait_for_topics(10)
 
+        # print(i, '- a')
+        quad.wait_for_topics(10)
+        # print(i, '- b')
         quad.thread.start()
+        # print(i, '- c')
         quad_list.append(quad)
         
     # for i in range(number_of_vehicles):
