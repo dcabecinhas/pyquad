@@ -35,45 +35,47 @@ from pymavlink import mavutil
 
 class Vehicle():
 
-    def __init__(self, ID=0):
+    def __init__(self, ID=0, vehicle_cfg=[]):
         # super(Vehicle, self).__init__(*args)
 
         self.ID = ID
         
         self.state = State()
 
+        print("Vehicle: ", vehicle_cfg['mavros'])
+        
         # ROS services
         service_timeout = 10
         rospy.loginfo("waiting for ROS services")
         try:
-            rospy.wait_for_service(f'uav_{self.ID}/mavros/param/get', service_timeout)
-            rospy.wait_for_service(f'uav_{self.ID}/mavros/cmd/arming', service_timeout)
-            rospy.wait_for_service(f'uav_{self.ID}/mavros/mission/push', service_timeout)
-            rospy.wait_for_service(f'uav_{self.ID}/mavros/mission/clear', service_timeout)
-            rospy.wait_for_service(f'uav_{self.ID}/mavros/set_mode', service_timeout)
+            rospy.wait_for_service(vehicle_cfg['mavros'] + '/mavros/param/get', service_timeout)
+            rospy.wait_for_service(vehicle_cfg['mavros'] + '/mavros/cmd/arming', service_timeout)
+            rospy.wait_for_service(vehicle_cfg['mavros'] + '/mavros/mission/push', service_timeout)
+            rospy.wait_for_service(vehicle_cfg['mavros'] + '/mavros/mission/clear', service_timeout)
+            rospy.wait_for_service(vehicle_cfg['mavros'] + '/mavros/set_mode', service_timeout)
             rospy.loginfo("ROS services are up")
         except rospy.ROSException:
             rospy.logerr("failed to connect to services")
-        self.get_param_srv = rospy.ServiceProxy(f'uav_{self.ID}/mavros/param/get', ParamGet)
-        self.set_arming_srv = rospy.ServiceProxy(f'uav_{self.ID}/mavros/cmd/arming',
+        self.get_param_srv = rospy.ServiceProxy(vehicle_cfg['mavros'] + '/mavros/param/get', ParamGet)
+        self.set_arming_srv = rospy.ServiceProxy(vehicle_cfg['mavros'] + '/mavros/cmd/arming',
                                                  CommandBool)
-        self.set_mode_srv = rospy.ServiceProxy(f'uav_{self.ID}/mavros/set_mode', SetMode)
-        self.wp_clear_srv = rospy.ServiceProxy(f'uav_{self.ID}/mavros/mission/clear',
+        self.set_mode_srv = rospy.ServiceProxy(vehicle_cfg['mavros'] + '/mavros/set_mode', SetMode)
+        self.wp_clear_srv = rospy.ServiceProxy(vehicle_cfg['mavros'] + '/mavros/mission/clear',
                                                WaypointClear)
-        self.wp_push_srv = rospy.ServiceProxy(f'uav_{self.ID}/mavros/mission/push',
+        self.wp_push_srv = rospy.ServiceProxy(vehicle_cfg['mavros'] + '/mavros/mission/push',
                                               WaypointPush)
 
-        self.state_sub = rospy.Subscriber(f'uav_{self.ID}/mavros/state', 
-                                                    State,
-                                                    self.state_callback)
+        # self.state_sub = rospy.Subscriber(vehicle_cfg['mavros'] + '/mavros/state', 
+        #                                             State,
+        #                                             self.state_callback)
 
-        # ROS subscribers
-        self.sub_topics_ready = {
-            key: False
-            for key in [
-                'state'
-            ]
-        }
+        # # ROS subscribers
+        # self.sub_topics_ready = {
+        #     key: False
+        #     for key in [
+        #         'state'
+        #     ]
+        # }
         
         # send setpoints in seperate thread to better prevent failsafe
         self.thread = Thread(target=self.activate, args=())
@@ -206,21 +208,23 @@ class Vehicle():
         self.set_arm(True, 3)
 
 if __name__ == '__main__':
-    rospy.init_node('pyquad', anonymous=True)
+    pass
+
+    # rospy.init_node('pyquad', anonymous=True)
     
-    number_of_vehicles = 4
+    # number_of_vehicles = 1
 
-    quad_list = []
-    for i in range(number_of_vehicles):
-        print(f"[{i}] Start vehicle object...")
-        quad = Vehicle(ID=i)
+    # quad_list = []
+    # for i in range(number_of_vehicles):
+    #     print(f"[{i}] Start vehicle object...")
+    #     quad = Vehicle(ID=i)
 
-        # print(i, '- a')
-        quad.wait_for_topics(10)
-        # print(i, '- b')
-        quad.thread.start()
-        # print(i, '- c')
-        quad_list.append(quad)
+    #     # print(i, '- a')
+    #     quad.wait_for_topics(10)
+    #     # print(i, '- b')
+    #     quad.thread.start()
+    #     # print(i, '- c')
+    #     quad_list.append(quad)
         
     # for i in range(number_of_vehicles):
     #     # Run each in a thread
@@ -231,32 +235,32 @@ if __name__ == '__main__':
     #     print(f"[{i}] ARM...")
     #     quad_list[i].set_arm(True, 5)
 
-    while True:
+    # while True:
 
-        print("Now listening for options - 0 to exit:")
-        try:
-            c = input()[0]
-        except:
-            continue
+    #     print("Now listening for options - 0 to exit:")
+    #     try:
+    #         c = input()[0]
+    #     except:
+    #         continue
 
-        # if(c=='1'):
-        #     print("* Position control *")
-        #     quad.offboard_position_active = True
-        #     quad.offboard_attitude_active = False
-        #     quad.offboard_load_active = False
-        # if(c=='2'):
-        #     print("* Attitude control *")
-        #     quad.offboard_position_active = False
-        #     quad.offboard_attitude_active = True
-        #     quad.offboard_load_active = False
+    #     # if(c=='1'):
+    #     #     print("* Position control *")
+    #     #     quad.offboard_position_active = True
+    #     #     quad.offboard_attitude_active = False
+    #     #     quad.offboard_load_active = False
+    #     # if(c=='2'):
+    #     #     print("* Attitude control *")
+    #     #     quad.offboard_position_active = False
+    #     #     quad.offboard_attitude_active = True
+    #     #     quad.offboard_load_active = False
 
-        # if(c=='3'):
-        #     print("* Load control *")
-        #     quad.t0 = rospy.get_time()
-        #     quad.t_prev = -0.01
-        #     quad.offboard_position_active = False
-        #     quad.offboard_attitude_active = False
-        #     quad.offboard_load_active = True
+    #     # if(c=='3'):
+    #     #     print("* Load control *")
+    #     #     quad.t0 = rospy.get_time()
+    #     #     quad.t_prev = -0.01
+    #     #     quad.offboard_position_active = False
+    #     #     quad.offboard_attitude_active = False
+    #     #     quad.offboard_load_active = True
 
-        if(c=='0'):
-            break
+    #     if(c=='0'):
+    #         break

@@ -1,0 +1,41 @@
+# Todo: Define rho then get n_cables and n_dims from rho matrix
+number_of_vehicles: 1
+dimensions: 3
+
+t0 : 0.0
+tf : 10.0
+
+t_step: 1.0e-2
+tolerance: 1.0e-4
+
+POINT_MASS: True
+
+NO_U_PERP_CROSS_TERMS: False
+
+TLD_DERIVATIVES_ZERO: True
+
+USE_OPTIMIZATION: False
+
+REMOVE_INSTABILITY_TERMS: False
+
+SIMULATE_REAL_QUADROTOR: True
+
+0:
+  mavros: ''
+  # vicon: '/vicon/uav_0'
+  vicon: '/iris_0'
+  attachment_point: [0, 0, -0.025]
+  cable_length: 1.23
+  starting_position: [ 0.0, 0, -3.0]
+  mass: 1.5
+
+load:
+  name: 'load'
+  # vicon: '/vicon/load'
+  vicon: '/load'
+  length: 0.05
+  width: 0.05
+  height: 0.05
+  mass: 0.3
+
+

@@ -1,0 +1,99 @@
+number_of_vehicles: 4
+dimensions: 3
+
+t0 : 0.0
+tf : 10.0
+
+t_step: 1.0e-2
+tolerance: 1.0e-4
+
+POINT_MASS: True
+
+NO_U_PERP_CROSS_TERMS: False
+
+TLD_DERIVATIVES_ZERO: True
+
+USE_OPTIMIZATION: True
+
+REMOVE_INSTABILITY_TERMS: False
+
+SIMULATE_REAL_QUADROTOR: True
+
+controller:
+
+  Kp: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 0.75]]
+  Kv: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 0.75]]
+  X_pv: [[0.5, 0.0, 0.0], [0.0, 0.5, 0.0], [0.0, 0.0, 0.375]]
+
+  L_q: 20
+  L_oq: 2
+  kq: 2
+  koq: 5
+
+  L_a: 0
+  kr: 0
+  ko: 0
+
+  L_qR: 10
+  L_oqR: 10
+  kqR: 200
+  kqo: 30
+
+  TL_damping: 0.0
+  TL_repulsive: 0.0
+
+  theta_min_for_optimization: 25
+
+
+0:
+  mavros: '/aero3'
+  # vicon: '/vicon/uav_1'
+  vicon: '/vicon/aero3'
+  attachment_point: [0, 0, -0.025]
+  cable_length: 1.45
+  starting_position: [ 0.8, 0.8, -1.0]
+  mass: 1.36
+  inertia: [[0.021, 0.0, 0.0], [0.0, 0.022, 0.0], [0.0, 0.0, 0.023]]
+  
+1:
+  mavros: '/aero7'
+  # vicon: '/vicon/uav_2'
+  vicon: '/vicon/aero7'
+  attachment_point: [0, 0, -0.025]
+  cable_length: 1.45
+  starting_position: [ -0.8, 0.8, -1.0]
+  mass: 1.36
+  inertia: [[0.021, 0.0, 0.0], [0.0, 0.022, 0.0], [0.0, 0.0, 0.023]]
+  
+2:
+  mavros: '/aero6'
+  # vicon: '/vicon/uav_3'
+  vicon: '/vicon/aero6'
+  attachment_point: [0, 0, -0.025]
+  cable_length: 1.45
+  starting_position: [ -0.8, -0.8, -1.0]
+  mass: 1.36
+  inertia: [[0.021, 0.0, 0.0], [0.0, 0.022, 0.0], [0.0, 0.0, 0.023]]
+
+3:
+  mavros: '/aero5'
+  # vicon: '/vicon/uav_0'
+  vicon: '/vicon/aero5'
+  attachment_point: [0, 0, -0.025]
+  cable_length: 1.45
+  starting_position: [ 0.8, -0.8, -1.0]
+  mass: 1.36
+  inertia: [[0.021, 0.0, 0.0], [0.0, 0.022, 0.0], [0.0, 0.0, 0.023]]
+
+load:
+  name: 'load'
+  # vicon: '/vicon/load'
+  vicon: '/vicon/load_iron'
+  length: 0.05
+  width: 0.05
+  height: 0.05
+  mass: 1.088
+
+
+# Matrix of attachment points in body frame
+# Change also --> q0, Ai

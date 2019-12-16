@@ -1,0 +1,79 @@
+number_of_vehicles: 4
+dimensions: 3
+
+t0 : 0.0
+tf : 20.0
+
+t_step: 1.0e-1
+tolerance: 1.0e-4
+
+POINT_MASS: False
+
+# For simulation with unknowns and disturbances
+NO_U_PERP_CROSS_TERMS: False
+TLD_DERIVATIVES_ZERO: True
+USE_OPTIMIZATION: True
+REMOVE_INSTABILITY_TERMS: False
+IGNORE_OMEGA_CANCELATION: False
+SIMULATE_REAL_QUADROTOR: True
+
+# # For exact solution
+# NO_U_PERP_CROSS_TERMS: False
+# TLD_DERIVATIVES_ZERO: False
+# USE_OPTIMIZATION: False
+# REMOVE_INSTABILITY_TERMS: False
+# IGNORE_OMEGA_CANCELATION: False
+# SIMULATE_REAL_QUADROTOR: False
+
+theta_min_for_optimization: 20
+
+0:
+  mavros: '/aero3'
+  # vicon: '/vicon/uav_1'
+  vicon: '/vicon/aero3'
+  attachment_point: [0.25, 0.225, -0.008]
+  cable_length: 1.45
+  starting_position: [ 0.8, 0.8, -1.4]
+  mass: 1.36
+  
+1:
+  mavros: '/aero7'
+  # vicon: '/vicon/uav_2'
+  vicon: '/vicon/aero7'
+  attachment_point: [-0.25, 0.225, -0.008]
+  cable_length: 1.45
+  starting_position: [ -0.8, 0.8, -1.4]
+  mass: 1.36
+  
+2:
+  mavros: '/aero6'
+  # vicon: '/vicon/uav_3'
+  vicon: '/vicon/aero6'
+  attachment_point: [-0.25, -0.225, -0.008]
+  cable_length: 1.45
+  starting_position: [ -0.8, -0.8, -1.4]
+  mass: 1.36
+
+3:
+  mavros: '/aero5'
+  # vicon: '/vicon/uav_0'
+  vicon: '/vicon/aero5'
+  attachment_point: [0.25, -0.225, -0.008]
+  cable_length: 1.45
+  starting_position: [ 0.8, -0.8, -1.4]
+  mass: 1.36
+
+
+load:
+  name: 'load'
+  # vicon: '/vicon/load'
+  vicon: '/vicon/load_board'
+  length: 0.5
+  width: 0.5
+  height: 0.016
+  mass: 1.5
+  inertia: [[0.08, 0.0, 0.0], [0.0, 0.08, 0.0], [0.0, 0.0, 0.15]]
+
+
+# Matrix of attachment points in body frame
+# Change also --> q0, Ai

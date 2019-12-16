@@ -1,0 +1,106 @@
+number_of_vehicles: 4
+dimensions: 3
+
+t0 : 0.0
+tf : 20.0
+
+POINT_MASS: False
+
+# # For simulation with unknowns and disturbances
+# NO_U_PERP_CROSS_TERMS: False
+# TLD_DERIVATIVES_ZERO: True
+# USE_OPTIMIZATION: True
+# REMOVE_INSTABILITY_TERMS: False
+# IGNORE_OMEGA_CANCELATION: False
+# SIMULATE_REAL_QUADROTOR: True
+# t_step: 1.0e-1
+# tolerance: 1.0e-4
+
+# For exact solution
+NO_U_PERP_CROSS_TERMS: False
+TLD_DERIVATIVES_ZERO: False
+USE_OPTIMIZATION: False
+REMOVE_INSTABILITY_TERMS: False
+IGNORE_OMEGA_CANCELATION: False
+SIMULATE_REAL_QUADROTOR: False
+t_step: 1.0e-4
+tolerance: 1.0e-8
+
+controller:
+
+  Kp: [[0.55, 0.0, 0.0], [0.0, 0.6, 0.0], [0.0, 0.0, 0.65]]
+  Kv: [[0.55, 0.0, 0.0], [0.0, 0.6, 0.0], [0.0, 0.0, 0.65]]
+  X_pv: [[0.275, 0.0, 0.0], [0.0, 0.3, 0.0], [0.0, 0.0, 0.325]]
+
+  L_q: 20
+  L_oq: 2
+  kq: 2
+  koq: 5
+
+  L_a: 0.9
+  kr: 7.5
+  ko: 2.5
+
+  L_qR: 10
+  L_oqR: 10
+  kqR: 200
+  kqo: 30
+
+  TL_damping: 0.0
+  TL_repulsive: 0.0
+
+  theta_min_for_optimization: 30
+
+0:
+  mavros: '/uav_0'
+  # vicon: '/vicon/uav_0'
+  vicon: '/iris_0'
+  attachment_point: [0.6,0.4,-0.1]
+  cable_length: 1.23
+  starting_position: [ 1.2, 0, -3.0]
+  mass: 1.5
+  inertia: [[0.021, 0.0, 0.0], [0.0, 0.022, 0.0], [0.0, 0.0, 0.023]]
+
+1:
+  mavros: '/uav_1'
+  # vicon: '/vicon/uav_1'
+  vicon: '/iris_1'
+  attachment_point: [-0.6,0.4,-0.1]
+  cable_length: 1.23
+  starting_position: [ 0.0, 0.8, -3.0]
+  mass: 1.5
+  inertia: [[0.021, 0.0, 0.0], [0.0, 0.022, 0.0], [0.0, 0.0, 0.023]]
+  
+2:
+  mavros: '/uav_2'
+  # vicon: '/vicon/uav_2'
+  vicon: '/iris_2'
+  attachment_point: [-0.6,-0.4,-0.1]
+  cable_length: 1.23
+  starting_position: [ -1.2, 0, -3.0]
+  mass: 1.5
+  inertia: [[0.021, 0.0, 0.0], [0.0, 0.022, 0.0], [0.0, 0.0, 0.023]]
+  
+3:
+  mavros: '/uav_3'
+  # vicon: '/vicon/uav_3'
+  vicon: '/iris_3'
+  attachment_point: [0.6,-0.4,-0.1]
+  cable_length: 1.23
+  starting_position: [ 0.0, -0.8, -3.0]
+  mass: 1.5
+  inertia: [[0.021, 0.0, 0.0], [0.0, 0.022, 0.0], [0.0, 0.0, 0.023]]
+  
+load:
+  name: 'load'
+  # vicon: '/vicon/load'
+  vicon: '/load'
+  length: 1.2
+  width: 0.8
+  height: 0.2
+  mass: 1.2
+  inertia: [[0.08, 0.0, 0.0], [0.0, 0.08, 0.0], [0.0, 0.0, 0.15]]
+
+
+# Matrix of attachment points in body frame
+# Change also --> q0, Ai

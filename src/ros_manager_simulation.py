@@ -1,13 +1,20 @@
 #!/usr/bin/env python3
 
-POINT_MASS = True
-from point_mass_1_vehicles import skew, mt, pack_state, process_state, n_cables, n_dims, mQ, mL, g, state_sizes, rho, sim_gains, sim_parameters
+import os
+import yaml
+import yappi
 
-# POINT_MASS = True
-# from point_mass_4_vehicles import skew, mt, pack_state, process_state, n_cables, n_dims, mQ, mL, g, state_sizes, rho, sim_gains, sim_parameters
+configuration_geometry = os.environ["GEOMETRY_CONFIGURATION"]
 
-# POINT_MASS = False
-# from rigid_body_4_vehicles import skew, mt, pack_state, process_state, n_cables, n_dims, mQ, mL, g, state_sizes, rho, sim_gains, sim_parameters
+with open(configuration_geometry) as file:
+    # The FullLoader parameter handles the conversion from YAML
+    # scalar values to Python the dictionary format
+    cfg = yaml.load(file)
+    
+if cfg['POINT_MASS']:
+    from point_mass_controller import skew, mt, pack_state, process_state, n_cables, n_dims, mQ, mL, g, state_sizes, rho, sim_gains, sim_parameters
+else:
+    from rigid_body_controller import skew, mt, pack_state, process_state, n_cables, n_dims, mQ, mL, g, state_sizes, rho, sim_gains, sim_parameters
 
 import rospy
 import math
@@ -19,7 +26,7 @@ from scipy.linalg import norm
 from nav_msgs.msg import Odometry
 from geometry_msgs.msg import PoseStamped, WrenchStamped, Quaternion, Vector3
 from std_msgs.msg import Header
-from mavros_msgs.msg import AttitudeTarget
+from mavros_msgs.msg import AttitudeTarget, State, RCIn
 
 from frame_conversions import transform_orientation_I, transform_orientation_B, transform_position_I, transform_position_B, transform_omega_B
 
@@ -29,6 +36,8 @@ import time
 from time import sleep
 
 from vehicle import Vehicle
+
+from pymavlink import mavutil
 
 np.set_printoptions(precision=6)
 np.set_printoptions(suppress=True)
@@ -46,30 +55,15 @@ def F_vector_to_Rotation(F):
 
     return Rotation.from_rotvec((angle * vector).reshape(-1,3))
 
-# def F_vector_to_Rotation(F):
-#     F = F.reshape(-1,n_cables,3,1)
-#     e3 = np.array([0,0,1]).reshape(-1,1,3,1)
-
-#     # Angle of
-#     angle = (np.arccos(mt(-e3) @ F / norm(F, axis=-2, keepdims = True)))
-#     vector = np.cross(-e3,F,axis=-2)
-#     vector = vector / norm(vector, axis=-2, keepdims = True)
-
-# #     print(Rotation.from_rotvec((angle * vector).reshape(-1,3)))
-
-#     return Rotation.from_rotvec((angle * vector).reshape(-1,3))
-
-
-
-
 class ROSLoadController():
 
-    def __init__(self, number_of_vehicles = 1, vehicle_prefix = 'iris_', cable_prefix = 'cable_', load_prefix = 'load', mavros_prefix = 'uav_' ):
+    def __init__(self, cfg = []):
 
-        self.log = np.zeros([1+sum(state_sizes),10000])
+        # Log is state_size + vehicle armed + first letter of vehicle mode + time
+        self.log = np.zeros([3+sum(state_sizes),10000])
 
         # super(ROSLoadController, self).__init__()
-        self.n = number_of_vehicles
+        self.n = cfg['number_of_vehicles']
 
         self.pL = np.zeros([1,3,1])
         self.vL = np.zeros([1,3,1])
@@ -85,49 +79,51 @@ class ROSLoadController():
         self.load_active = False
 
         self.q_input = np.zeros([self.n,4,1])
+        self.q_input[:,0,0] = 1
         self.T_input = np.zeros([self.n,1,1])
+
+        self.state = State()
+
+        self.rc = RCIn()
 
         self.sub_topics_ready = {
             key: False
-            # for key in ['vehicle_odom', 'vehicle_force', 'cable_odom', 'cable_force',
-            # 'load_odom', 'load_force' ]
-            for key in ['vehicle_odom', 'load_odom', 'vehicle_force', 'load_force' ]
+            for key in ['vehicle_odom', 'load_odom', 'state', 'rc']
         }
+
+        self.mode = number_of_vehicles*['.']
+        self.armed = np.zeros([self.n,1,1])
 
         # ROS subscribers
         for i in range(number_of_vehicles):
-            self.vehicle_odom_sub = rospy.Subscriber(vehicle_prefix + str(i) + '/odom',
+            self.vehicle_odom_sub = rospy.Subscriber(cfg[i]['vicon'] + '/odom',
                                                 Odometry,
                                                 self.vehicle_odom_callback,
                                                 callback_args=i)
-            self.vehicle_force_sub = rospy.Subscriber(vehicle_prefix + str(i) + '/force',
-                                                WrenchStamped,
-                                                self.vehicle_force_callback,
+            self.state_sub = rospy.Subscriber(cfg[i]['mavros'] + '/mavros/state', 
+                                                State,
+                                                self.state_callback,
                                                 callback_args=i)
-            # self.cable_odom_sub = rospy.Subscriber(cable_prefix + str(i) + '/odom',
-            #                                     Odometry,
-            #                                     self.local_position_callback,
-            #                                     callback_args=i)
-            # self.cable_force_sub = rospy.Subscriber(cable_prefix + str(i) + '/force',
-            #                                     WrenchStamped,
-            #                                     self.local_position_callback,
-            #                                     callback_args=i)
 
-        self.load_odom_sub = rospy.Subscriber(load_prefix + '/odom',
+        self.rc_sub = rospy.Subscriber(cfg[0]['mavros'] + '/mavros/rc/in',
+                                                RCIn,
+                                                self.rc_callback)
+
+        print(f"Subscribing to {cfg[0]['mavros'] + '/mavros/rc/in'}")
+
+        self.load_odom_sub = rospy.Subscriber(cfg['load']['vicon'] + '/odom',
                                             Odometry,
                                             self.load_odom_callback)
-        self.load_force_sub = rospy.Subscriber(load_prefix + '/force',
-                                            WrenchStamped,
-                                            self.load_force_callback)
 
         # ROS Publishers
 
         # Attitude
+
         self.att = AttitudeTarget()
-        # self.att_setpoint_pub = [rospy.Publisher(
-        #         f'load_controller/vehicle_{i}/attitude', AttitudeTarget, queue_size=1) for i in range(number_of_vehicles)]
+
         self.att_setpoint_pub = [rospy.Publisher(
-                mavros_prefix + str(i) + '/mavros/setpoint_raw/attitude', AttitudeTarget, queue_size=1) for i in range(number_of_vehicles)]
+                cfg[i]['mavros'] + '/mavros/setpoint_raw/attitude', AttitudeTarget, queue_size=1) for i in range(number_of_vehicles)]
+        print('publish attitude at: ', cfg[i]['mavros'] + '/mavros/setpoint_raw/attitude')
 
         # send setpoints in seperate thread to better prevent failsafe
         self.att_thread = Thread(target=self.send_att, args=())
@@ -136,15 +132,13 @@ class ROSLoadController():
 
         # Pose
         self.pos = PoseStamped()
-        # self.pos_setpoint_pub = [rospy.Publisher(
-        #         f'load_controller/vehicle_{i}/position', PoseStamped, queue_size=1) for i in range(number_of_vehicles)]
         self.pos_setpoint_pub = [rospy.Publisher(
-                mavros_prefix + str(i) + '/mavros/setpoint_position/local', PoseStamped, queue_size=1) for i in range(number_of_vehicles)]
+                cfg[i]['mavros']  + '/mavros/setpoint_position/local', PoseStamped, queue_size=1) for i in range(number_of_vehicles)]
 
         # send setpoints in separate thread to better prevent failsafe
         self.pos_thread = Thread(target=self.send_pos, args=())
         self.pos_thread.daemon = True
-        self.pos_thread.start()
+        # self.pos_thread.start()
 
     #
     # Callback functions
@@ -211,21 +205,39 @@ class ROSLoadController():
         if not self.sub_topics_ready['vehicle_odom']:
             self.sub_topics_ready['vehicle_odom'] = True
 
-        # If quadrotors are upside-down then terminate simulation
-        e3 = np.array([0,0,1]).reshape(-1,3,1)
 
+    def state_callback(self, data, vehicle_number):
+        if self.state.armed != data.armed:
+            rospy.loginfo(f"Vehicle {vehicle_number}: armed state changed from {self.state.armed} to {data.armed}")
 
-    def vehicle_force_callback(self, data, vehicle_number):
-        # self.local_position = data
+        if self.state.connected != data.connected:
+            rospy.loginfo(f"Vehicle {vehicle_number}: connected changed from {self.state.connected} to {data.connected}")
 
-        if not self.sub_topics_ready['vehicle_force']:
-            self.sub_topics_ready['vehicle_force'] = True
+        if self.state.mode != data.mode:
+            rospy.loginfo(f"Vehicle {vehicle_number}: mode changed from {self.state.mode} to {data.mode}")
 
-    def load_force_callback(self, data):
-        # self.local_position = data
+        if self.state.system_status != data.system_status:
+            rospy.loginfo(f"Vehicle {vehicle_number}: system_status changed from {mavutil.mavlink.enums['MAV_STATE'][self.state.system_status].name} to {mavutil.mavlink.enums['MAV_STATE'][data.system_status].name}")
 
-        if not self.sub_topics_ready['load_force']:
-            self.sub_topics_ready['load_force'] = True
+        self.mode = data.mode
+        self.armed = data.armed
+        
+        self.state = data
+    
+        # print(f"Vehicle {vehicle_number} MODE: ",self.state.mode)
+
+        # mavros publishes a disconnected state message on init
+        if not self.sub_topics_ready['state'] and data.connected:
+            self.sub_topics_ready['state'] = True
+
+    def rc_callback(self, data):
+            self.rc = data.channels
+
+            self.attitude_active = self.rc[6] >= 1300
+            self.load_active = self.rc[6] < 1300
+            
+            if not self.sub_topics_ready['rc']:
+                self.sub_topics_ready['rc'] = True
 
     def wait_for_topics(self, timeout):
         """wait for simulation to be ready, make sure we're getting topic info
@@ -265,13 +277,15 @@ class ROSLoadController():
             self.att.thrust = self.T_input[0]
 
             self.att.type_mask = 7  # ignore body rate
+
+            # print('self.att.target_system:', self.att.target_system)
+            # print('self.att.target_component:', self.att.target_component)
+
         except Exception as e:
             print(e)
             pass
 
         while not rospy.is_shutdown():
-            # print(f"-----")
-            # print(f"a = {rospy.get_time()}")
             self.att.header.stamp = rospy.Time.now()
 
             if(not self.position_active):
@@ -280,53 +294,14 @@ class ROSLoadController():
                     (T,q) = self.controller_attitude()
                 if(self.load_active):
                     (T,q) = self.controller_load()
-                    # print(f"q_input = {q}")
-                    # print(f"T_input = {T}")
-
-                    # print(f"  q = {q}")
-                    # print(f"  T = {T}")
-                    # print(f"  T.shape = {T.shape}")
-
-                # print(f"b = {rospy.get_time()}")
 
                 for i in range(self.n):
                     q_ENU = transform_orientation_I(transform_orientation_B(Rotation.from_quat(q))).as_quat()
-
-                    # print(f"q_input_ENU = {q_ENU}")
-                    # print(f"T_input = {T}")
-                    # print(f"q_quad_ENU = {self.gazebo_q_quad_ENU}")
 
                     self.att.orientation = Quaternion(*q_ENU[i])
                     self.att.thrust = T[i]
 
                     self.att_setpoint_pub[i].publish(self.att)
-
-                    # print(f"c_{i} = {rospy.get_time()}")
-
-                # print(f"d = {rospy.get_time()}")
-
-                # print(f"Published att. at t={rospy.get_time()}")
-                # if(self.load_active):
-                #     # print(f'Published to UAV {i}:')
-                #     # print(f"  q[i] = {q_ENU[i]}")
-                #     # print(f"  T[i] = {T[i]}")
-
-                #     # Debug
-                #     print("Published attitude commands: ")
-
-                #     # Debug
-                #     e3 = np.array([0,0,1]).reshape(-1,3,1)
-
-                #     i = 0
-
-                #     print(f"   T_{i}: ", T[i])
-                #     print(f"   q_{i}: ", q[i])
-                #     print(f"   q_{i} ENU: ", q_ENU[i])
-                #     print(f"   euler_{i}: ", Rotation.from_quat(q[i]).as_euler('zyx'))
-                #     print(f"   euler_{i} NED: ", Rotation.from_quat(q_ENU[i]).as_euler('zyx'))
-                #     print(f" r3_{i}    : ", (Rotation.from_quat(q[i]).as_dcm() @ -e3).ravel())
-                #     print(f" r3_{i} NED: ", (Rotation.from_quat(q_ENU[i]).as_dcm() @ e3).ravel())
-                #     print("---")
 
             try:  # prevent garbage in console output when thread is killed
                 rate.sleep()
@@ -346,9 +321,9 @@ class ROSLoadController():
             # while True:
             t = rospy.get_time()
 
-            self.pd = np.array([0,0,-0.5]).reshape([3,1])
-            self.Dpd = np.array([0,0,0]).reshape([3,1])
-            self.D2pd = np.array([0,0,0]).reshape([3,1])
+            self.pd = np.array([cfg[i]['starting_position'] for i in range(cfg['number_of_vehicles'])]).reshape(cfg['number_of_vehicles'],cfg['dimensions'],1)
+            self.Dpd = 0*self.pd
+            self.D2pd = 0*self.pd
 
             if(self.position_active):
                 pd = self.controller_position()
@@ -398,16 +373,6 @@ class ROSLoadController():
         self.dq = - skew(self.q) @ skew(self.q) @ (self.vL_RB - self.vQ) / norm(self.pL_RB - self.pQ, axis=-2, keepdims=True)
         self.o = skew(self.q) @ self.dq
 
-        # print('pL = ', self.pL)
-
-        # print('pQ = ', self.pQ)
-
-        # print('q = ', self.q)
-
-        # print('dq = ', self.dq)
-
-        # print('o = ', self.o)
-
         return
 
     def controller_load(self):
@@ -415,28 +380,10 @@ class ROSLoadController():
         self.delta_TLd = np.zeros(n_cables*n_dims)
         self.V = np.zeros([1,1])
 
-        t = rospy.get_time() # - self.t0
+        t = rospy.get_time() - self.t0
         dt = t - self.t_prev
         self.t_prev = t
-        # print(f"==========    t = {t:.3} / dt = {dt:.3}   ==========")
-        # print(f"self.pL = {self.pL.ravel()}")
-        # print(f"self.vL = {self.vL.ravel()}")
-        # print(f"self.pQ = {self.pQ.ravel()}")
-        # print(f"self.vQ = {self.vQ.ravel()}")
-        # print(f"self.RL = {self.RL.ravel()}")
-        # print(f"self.oL = {self.oL.ravel()}")
-        # print(f"self.delta_TLd = {self.delta_TLd.ravel()}")
-        # print(f"self.q  = {self.q.ravel()}")
-        # print(f"self.o  = {self.o.ravel()}")
-        # print(f"self.RQ = {self.RQ.ravel()}")
-        # print(f"self.oQ = {self.oQ.ravel()}")
-        # print(f"self.qQ = {self.qQ.ravel()}")
-        # e3 = np.array([0,0,1]).reshape([3,1])
-        # r3 = self.RQ @ e3
-        # print(f"r3Q     = {r3.ravel()}")
-        # print(f"oQ      = {self.oQ.ravel()}")
-        # print("===================================")
-
+        
         y = pack_state(self.pL,
                     self.vL,
                     self.RL,
@@ -450,10 +397,6 @@ class ROSLoadController():
 
         try:
             dy, state = process_state(t,y.T)
-            # print(f"state.pd = {state.pd}")
-            # print(f"state.Fd = {state.Fd}")
-            # print(f"state.q = {state.q}")
-            # print(f"state.qd = {state.qd}")
         except Exception as e:
             print("Couldn't compute state")
             print(e)
@@ -461,26 +404,16 @@ class ROSLoadController():
 
         state.u = state.u.reshape(-1,3,1)
 
-        # T = np.zeros([self.n,1,1])
-        # q = np.zeros([self.n,4,1])
+        state.u = state.u*0.9
 
-        r3_d = (- state.u / norm(state.u, axis=-2, keepdims=True)).reshape(-1,3,1)
-        qd = state.qd.reshape(-1,3,1)
+        # r3_d = (- state.u / norm(state.u, axis=-2, keepdims=True)).reshape(-1,3,1)
+        # qd = state.qd.reshape(-1,3,1)
+        
         R = F_vector_to_Rotation(state.u)
 
-        kT = 0.5
-
-        q = R.as_quat().reshape(-1,4,1)
+        q = R.as_quat().reshape(-1,number_of_vehicles,1)
 
         T = self.SI2RC(norm(state.u,axis=-2,keepdims=True))
-
-        # print("u = ", state.u)
-        # print("T = ", T)
-
-        # print(f"state.u.shape = {state.u.shape}")
-        # print(f"R.shape = {R.shape}")
-        # print(f"q.shape = {q.shape}")
-        # print(f"T.shape = {T.shape}")
 
         T = np.clip(T,0,1)
 
@@ -491,7 +424,7 @@ class ROSLoadController():
 
         yawd = np.deg2rad(0)
 
-        R_yaw = Rotation.from_rotvec(np.squeeze(r3 * (yawd-yaw).reshape(4,1,1)))
+        R_yaw = Rotation.from_rotvec(np.squeeze(r3 * (yawd-yaw).reshape(number_of_vehicles,1,1)))
         R_yaw_0 = (R_yaw * R)
 
         q = R_yaw_0.as_quat()
@@ -524,23 +457,7 @@ class ROSLoadController():
             import os
             os._exit(1)
 
-        # print("u = ", state.u[0])
-        # print("q[0] = ",q[0])
-        # print("Euler (qF)[0]:")
-        # print(R_yaw_0[0].as_euler('zyx'))
-
-        # print('u = ', state.u)
-        # print('T = ', T)
-        # print('q = ', q)
-
-        # print("Fd = ", state.Fd)
-        # print("Md = ", state.Md)
-        # print("R = ", state.R)
-        # print("Rd = ", state.Rd)
-        # print("q = ", state.q)
-        # print("qd = ", state.qd)
-
-        if POINT_MASS:
+        if cfg['POINT_MASS']:
             # Point mass
             state_vector = np.vstack([state.p.reshape(-1,1),
                     state.v.reshape(-1,1),
@@ -565,66 +482,54 @@ class ROSLoadController():
                     state.qo.reshape(-1,1),
                     state.V.reshape(-1,1),])
 
-        self.log[:-1,self.k] = state_vector.ravel()
+        self.log[:-3,self.k] = state_vector.ravel()
+        self.log[-3,self.k] = self.armed
+        self.log[-2,self.k] = ord(self.mode[0])
         self.log[-1,self.k] = t
         self.k = self.k + 1
 
         # print(f"Computed att. at t={t}")
 
-#         print(f"t_ROS = {rospy.get_time()},   t = {t}")
-#         print(f"NED commands: ")
-#         print(f"   T = {T}")
-#         print(f"   q = {q}")
-#         print( "---")
+        # print(f"t_ROS = {rospy.get_time()},   t = {t}")
+        # print(f"NED commands: ")
+        # print(f"   q = {q}")
+        # print( "---")
+        euler = Rotation.from_quat(q).as_euler('zyx')
+        # print(f"Load   --- ")
+        # print(f"F: {mt(state.u)}")
+        # print(f"T: {T.ravel()}")
+        # print(f"Euler: {euler}")
+        # print('=========================================')
+        # print(state)
 
         return (T, q)
 
 
     def SI2RC(self,F):
-        T = 0.0167*F + 0.3351
+        # # For simulation
+        # T = 0.0167*F + 0.3351
+        # # For Intel Aero experimental
+        T = F / 20 - 0.05
         return T
 
     def controller_attitude(self):
 
         e3 = np.array([0,0,1]).reshape([3,1])
 
-        kp = 1.5 * np.array([1,1,1]).reshape([3,1])
-        kv = 3 * np.array([1,1,1]).reshape([3,1])
+        kp = np.array([5.0,5.0,2.0]).reshape([3,1])
+        kv = np.array([4.0,4.0,1.0]).reshape([3,1])
 
-        # Reference
-
-        self.pd = np.array([[
-            [ 1.2/2,  0.8/2, -3.0],
-            [-1.2/2,  0.8/2, -3.0],
-            [-1.2/2, -0.8/2, -3.0],
-            [ 1.2/2, -0.8/2, -3.0]
-            ]]).reshape(-1,3,1)
-
-        # Start diagonal for eight maneuver
-        self.pd = np.array([[
-            [ 1.2/2 ,  0    , -3.0],
-            [   0   ,  0.8  , -3.0],
-            [-1.2/2 ,  0    , -3.0],
-            [   0   ,  0.8  , -3.0]
-            ]]).reshape(-1,3,1)
+        self.pd = np.array([cfg[i]['starting_position'] for i in range(cfg['number_of_vehicles'])]).reshape(cfg['number_of_vehicles'],cfg['dimensions'],1)
         self.Dpd = 0*self.pd
         self.D2pd = 0*self.pd
 
-        # print('self.pQ = ', self.pQ)
-        # print('self.pd = ', self.pd)
-
         # PD controller for position
 
-        Fd = - kp*(self.pQ - self.pd) - kv*(self.vQ - self.Dpd) + mQ*self.D2pd - (mQ + mL/4)*g*e3
+        # Fd = - kp*(self.pQ - self.pd) - kv*(self.vQ - self.Dpd) + mQ*self.D2pd - (mQ + mL/number_of_vehicles)*g*e3
+
+        Fd = - kp*(self.pQ - self.pd) - kv*(self.vQ - self.Dpd) + mQ*self.D2pd - mQ*g*e3
 
         R = F_vector_to_Rotation(Fd)
-
-        # print(f"R * norm(Fd) * (-e3)  = {(R).as_dcm() @ (-e3) * norm(state.Fd)}")
-
-        # q = R.as_quat().reshape(-1,4,1)
-
-        # kT = 2.5
-        # T = kT*(norm(Fd, axis=-2, keepdims=True)/(mQ*g) - 1.0) + 0.5
 
         T = self.SI2RC(norm(Fd,axis=-2,keepdims=True))
 
@@ -635,9 +540,13 @@ class ROSLoadController():
 
         q = (R*R_yaw).as_quat()
 
-        # # For thrust identification
-        # print("T   = ", T.ravel() )
-        # print("p_z =", self.pQ[:,2,:].ravel() )
+        # print('pd shape = ', self.pd.shape)
+        # print('pQ shape = ', self.pQ.shape)
+        # print('T shape = ', T.shape)
+        # for i in range(cfg['number_of_vehicles']):
+        #     print(f"Thrust   ---    T: {T[i]},   pd = {self.pd[i].T},   p = {self.pQ[i].T}")
+        #     print("Force      ---   Fd: ")
+        #     print(np.column_stack([Fd[i].ravel(), (- kp*(self.pQ - self.pd))[i].ravel(), (- kv*(self.vQ - self.Dpd))[i].ravel()]))
 
         return (T, q)
 
@@ -648,16 +557,22 @@ class ROSLoadController():
 
 if __name__ == '__main__':
 
-    number_of_vehicles = 4
+    # yappi.start()
 
     print("Initializing node...")
     rospy.init_node('pyquad', anonymous=True)
 
+    number_of_vehicles = cfg['number_of_vehicles']
+
+    print(f'=== number_of_vehicles ==={number_of_vehicles}')
+
     print("Initializing Controller...")
-    load_controller = ROSLoadController(number_of_vehicles=4)
+    load_controller = ROSLoadController(cfg)
+
+    print(f'=== number_of_vehicles ==={number_of_vehicles}')
 
     print("Waiting for topics...")
-    load_controller.wait_for_topics(30)
+    load_controller.wait_for_topics(5)
 
     load_controller.computeSystemStates()
 
@@ -666,20 +581,19 @@ if __name__ == '__main__':
     load_controller.attitude_active = True
     load_controller.load_active = False
 
+    print(f'=== number_of_vehicles ==={number_of_vehicles}')
+    
     # Arm quadrotors and set mode to offboard
     quad_list = []
     for i in range(number_of_vehicles):
         print(f"[{i}] Start vehicle object...")
-        quad = Vehicle(ID=i)
-
-        # print(i, '- a')
-        quad.wait_for_topics(10)
-        # print(i, '- b')
+        quad = Vehicle(ID=i, vehicle_cfg=cfg[i])
+        
+        # quad.wait_for_topics(10)
         quad.thread.start()
-        # print(i, '- c')
         quad_list.append(quad)
 
-    rospy.sleep(7.0)
+    rospy.sleep(100.0)
 
     print("* Load control *")
     load_controller.t0 = rospy.get_time()
@@ -689,7 +603,12 @@ if __name__ == '__main__':
     load_controller.attitude_active = False
     load_controller.load_active = True
 
-    sleep(60)
+    rospy.sleep(30.0)
+
+    
+    rospy.signal_shutdown("Finished.")
+    
+    print("Saving logs")
 
     filename = time.strftime("%Y%m%d_%H%M%S")
     directory = "numpy_logs"
@@ -701,59 +620,20 @@ if __name__ == '__main__':
         pass
     np.savez_compressed(os.path.join(directory,filename),
         state_vector=load_controller.log,
-        sim_parameters=sim_parameters,
-        sim_gains=sim_gains
+        configuration=cfg
         )
     
+    # # Profiling results
+    # yappi.get_func_stats().print_all()
+    # yappi.get_thread_stats().print_all()
+
+    # from datetime import datetime
+    # func_stats = yappi.get_func_stats()
+    # func_stats.save('callgrind.out.' + datetime.now().isoformat(), 'CALLGRIND')
+    # yappi.stop()
+    # yappi.clear_stats()
+
+    print("SHUTTING DOWN ROS.")
+
     import os
     os._exit(1)
-
-    # while True:
-
-    #     print("Now listening for options (1,2,3) - 0 to exit:")
-    #     try:
-    #         c = input()[0]
-    #     except:
-    #         continue
-
-    #     if(c=='1'):
-    #         print("* Position control *")
-    #         load_controller.position_active = True
-    #         load_controller.attitude_active = False
-    #         load_controller.load_active = False
-
-    #     if(c=='2'):
-    #         print("* Attitude control *")
-    #         load_controller.position_active = False
-    #         load_controller.attitude_active = True
-    #         load_controller.load_active = False
-
-    #     if(c=='3'):
-    #         print("* Load control *")
-    #         load_controller.t0 = rospy.get_time()
-    #         load_controller.k = 0
-    #         load_controller.t_prev = -0.01
-    #         load_controller.position_active = False
-    #         load_controller.attitude_active = False
-    #         load_controller.load_active = True
-
-    #     if(c=='0'):
-    #         filename = time.strftime("%Y%m%d_%H%M%S")
-    #         directory = "numpy_logs"
-
-    #         import os
-    #         try:
-    #             os.mkdir( directory )
-    #         except FileExistsError:
-    #             pass
-    #         np.savez_compressed(os.path.join(directory,filename),
-    #             state_vector=load_controller.log,
-    #             sim_parameters=sim_parameters,
-    #             sim_gains=sim_gains
-    #             )
-
-    #         print("SHUTTING DOWN ROS.")
-    #         # import sys
-    #         # sys.exit()
-    #         rospy.signal_shutdown("Finished.")
-    #         break
